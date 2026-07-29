@@ -484,14 +484,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        BlockRule? rule = _config.Rules.FirstOrDefault(candidate => candidate.Id == selected.Id);
-        if (rule is null)
+        string ruleId = selected.Id;
+        BlockRule? ruleForDialog = _config.Rules.FirstOrDefault(candidate => candidate.Id == ruleId);
+        if (ruleForDialog is null)
         {
             RefreshRules();
             return;
         }
 
-        var dialog = new RuleEditWindow(rule) { Owner = this };
+        var dialog = new RuleEditWindow(ruleForDialog) { Owner = this };
         if (dialog.ShowDialog() != true)
         {
             return;
@@ -511,6 +512,22 @@ public partial class MainWindow : Window
                 "规则不安全",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+            return;
+        }
+
+        // A modal rule editor continues pumping dispatcher events. The status timer can
+        // reload _config while the dialog is open, so reacquire the rule from the latest
+        // config instead of saving the stale object that populated the dialog.
+        ReloadConfig();
+        BlockRule? rule = _config.Rules.FirstOrDefault(existing => existing.Id == ruleId);
+        if (rule is null)
+        {
+            MessageBox.Show(
+                "规则已被其他操作删除，请刷新后重试。",
+                "BlockGame",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            RefreshRules();
             return;
         }
 
