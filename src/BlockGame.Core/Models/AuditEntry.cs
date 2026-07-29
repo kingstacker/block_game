@@ -16,6 +16,8 @@ public sealed class AuditEntry
 
     public string? ProcessPath { get; set; }
 
+    public string? Domain { get; set; }
+
     public string? RuleId { get; set; }
 
     public bool? DesktopNotificationSent { get; set; }

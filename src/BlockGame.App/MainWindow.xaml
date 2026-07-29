@@ -118,6 +118,7 @@
                                           SelectionChanged="RuleTargetComboBox_SelectionChanged">
                                     <ComboBoxItem Content="程序文件名" Tag="FileName" />
                                     <ComboBoxItem Content="完整路径" Tag="FullPath" />
+                                    <ComboBoxItem Content="网站域名" Tag="Domain" />
                                 </ComboBox>
                             </StackPanel>
                             <StackPanel Grid.Column="2" Margin="0,0,12,0">

@@ -50,7 +50,7 @@ public static class SafetyPolicy
 
         if (rule.Target == RuleTarget.Domain)
         {
-            return "网站屏蔽功能已经移除。 ";
+            return WebsiteDomainRules.ValidatePattern(rule.Pattern);
         }
 
         IReadOnlyList<string> patterns = rule.Target == RuleTarget.FileName
@@ -117,14 +117,9 @@ public static class SafetyPolicy
         return target switch
         {
             RuleTarget.FileName => NormalizeFileNamePattern(pattern),
+            RuleTarget.Domain => WebsiteDomainRules.NormalizePattern(pattern),
             _ => pattern.Trim()
         };
-    }
-
-    public static int RemoveLegacyWebsiteRules(AppConfig config)
-    {
-        ArgumentNullException.ThrowIfNull(config);
-        return config.Rules.RemoveAll(rule => rule.Target == RuleTarget.Domain);
     }
 
     public static IReadOnlyList<string> SplitFileNamePatterns(string patterns)
@@ -151,6 +146,23 @@ public static class SafetyPolicy
         foreach (BlockRule rule in config.Rules.Where(rule => rule.Target == RuleTarget.FileName))
         {
             string normalized = NormalizeFileNamePattern(rule.Pattern);
+            if (!string.Equals(rule.Pattern, normalized, StringComparison.Ordinal))
+            {
+                rule.Pattern = normalized;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    public static bool NormalizeDomainRulePatterns(AppConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        bool changed = false;
+        foreach (BlockRule rule in config.Rules.Where(rule => rule.Target == RuleTarget.Domain))
+        {
+            string normalized = WebsiteDomainRules.NormalizePattern(rule.Pattern);
             if (!string.Equals(rule.Pattern, normalized, StringComparison.Ordinal))
             {
                 rule.Pattern = normalized;

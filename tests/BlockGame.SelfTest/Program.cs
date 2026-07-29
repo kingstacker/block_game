@@ -13,7 +13,9 @@ internal static class Program
             ("密码输错限速", PasswordRateLimit),
             ("通配符和规则匹配", RuleMatching),
             ("默认游戏平台和影音规则", DefaultRules),
-            ("旧网站功能清理迁移", WebsiteFeatureCleanup),
+            ("网站域名规则", WebsiteDomainRulesTest),
+            ("DNS 拦截响应", DnsBlockedResponse),
+            ("旧 hosts 托管区清理", LegacyHostsCleanup),
             ("关键系统进程安全名单", SafetyList),
             ("最高优先级调试复位", DebugReset),
             ("解除冷静期", UnlockCooldown),
@@ -186,31 +188,37 @@ internal static class Program
         Assert(config.Rules.Count == 3, "重复迁移改变了规则数量。 ");
     }
 
-    private static void WebsiteFeatureCleanup()
+    private static void WebsiteDomainRulesTest()
     {
-        var config = new AppConfig
-        {
-            Rules =
-            [
-                new BlockRule
-                {
-                    Name = "旧网站规则",
-                    Target = RuleTarget.Domain,
-                    Pattern = "example.com"
-                },
-                new BlockRule
-                {
-                    Name = "保留的程序规则",
-                    Target = RuleTarget.FileName,
-                    Pattern = "game.exe"
-                }
-            ]
-        };
-        Assert(SafetyPolicy.RemoveLegacyWebsiteRules(config) == 1, "旧网站规则未被迁移删除。 ");
         Assert(
-            config.Rules.Count == 1 && config.Rules[0].Target == RuleTarget.FileName,
-            "清理网站功能时误删了程序规则。 ");
+            WebsiteDomainRules.NormalizePattern(
+                "https://poki.com/zh; *.POKI.com；例子.测试")
+                == "poki.com;xn--fsqu00a.xn--0zwm56d",
+            "网址、通配符或国际化域名未正确规范化。 ");
+        Assert(
+            WebsiteDomainRules.IsMatch("www.poki.com", "poki.com"),
+            "域名规则未覆盖子域名。 ");
+        Assert(
+            !WebsiteDomainRules.IsMatch("notpoki.com", "poki.com"),
+            "域名边界匹配错误。 ");
 
+        var rule = new BlockRule
+        {
+            Name = "Poki",
+            Target = RuleTarget.Domain,
+            Pattern = "https://poki.com/zh"
+        };
+        Assert(
+            SafetyPolicy.ValidateRule(rule) is null,
+            "有效网站规则未通过验证。 ");
+        rule.Pattern = "*game*";
+        Assert(
+            SafetyPolicy.ValidateRule(rule) is not null,
+            "无法由选择性NRPT实现的任意通配规则通过了验证。 ");
+    }
+
+    private static void LegacyHostsCleanup()
+    {
         const string originalHosts = "127.0.0.1 custom.local\r\n# user comment\r\n";
         string rendered = HostsFileRenderer.Render(
             originalHosts,
@@ -221,6 +229,32 @@ internal static class Program
         string removed = HostsFileRenderer.Render(rendered, []);
         Assert(!removed.Contains(HostsFileRenderer.BeginMarker, StringComparison.Ordinal), "旧 hosts 托管区块未移除。 ");
         Assert(removed.Contains("# user comment", StringComparison.Ordinal), "移除托管区块时破坏了用户 hosts 内容。 ");
+    }
+
+    private static void DnsBlockedResponse()
+    {
+        byte[] query =
+        [
+            0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x0E, (byte)'b', (byte)'l', (byte)'o', (byte)'c', (byte)'k',
+            (byte)'g', (byte)'a', (byte)'m', (byte)'e', (byte)'-', (byte)'t',
+            (byte)'e', (byte)'s', (byte)'t',
+            0x07, (byte)'i', (byte)'n', (byte)'v', (byte)'a', (byte)'l',
+            (byte)'i', (byte)'d',
+            0x00, 0x00, 0x01, 0x00, 0x01
+        ];
+        Assert(
+            DnsMessageResponder.TryCreateNameErrorResponse(
+                query,
+                out string domain,
+                out byte[] response),
+            "有效DNS查询未生成拦截响应。 ");
+        Assert(domain == "blockgame-test.invalid", "DNS查询域名解析错误。 ");
+        Assert(response[0] == 0x12 && response[1] == 0x34, "DNS事务ID未保留。 ");
+        Assert((response[2] & 0x80) != 0, "DNS响应标志未设置。 ");
+        Assert((response[3] & 0x0F) == 3, "DNS响应不是NXDOMAIN。 ");
+        Assert(response[6] == 0 && response[7] == 0, "DNS拦截响应错误地包含答案。 ");
     }
 
     private static void UnlockCooldown()

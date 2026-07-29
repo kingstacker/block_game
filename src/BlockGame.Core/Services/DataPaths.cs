@@ -26,6 +26,10 @@ public sealed class DataPaths
 
     public string MaintenanceStopFile => Path.Combine(RootDirectory, "maintenance-stop.request");
 
+    public string NrptDesiredDomainsFile => Path.Combine(RootDirectory, "nrpt-desired-domains.json");
+
+    public string BrowserDnsPolicyBackupFile => Path.Combine(RootDirectory, "browser-dns-policy-backup.json");
+
     public static DataPaths CreateDefault()
     {
         var overrideDirectory = Environment.GetEnvironmentVariable("BLOCKGAME_DATA_DIR");

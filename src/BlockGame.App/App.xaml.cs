@@ -40,11 +40,7 @@ public partial class App : System.Windows.Application
             }
 
             bool configChanged = SafetyPolicy.NormalizeFileNameRulePatterns(config);
-            int removedWebsiteRules = SafetyPolicy.RemoveLegacyWebsiteRules(config);
-            if (removedWebsiteRules > 0)
-            {
-                configChanged = true;
-            }
+            configChanged |= SafetyPolicy.NormalizeDomainRulePatterns(config);
             int addedDefaultRules = DefaultRulePresets.Apply(config);
             if (addedDefaultRules > 0)
             {
@@ -54,14 +50,6 @@ public partial class App : System.Windows.Application
             if (configChanged)
             {
                 configStore.Save(config);
-            }
-            if (removedWebsiteRules > 0)
-            {
-                auditLog.Append(new BlockGame.Core.Models.AuditEntry
-                {
-                    EventType = "WebsiteFeatureRemoved",
-                    Message = $"网站屏蔽功能已移除，同时删除 {removedWebsiteRules} 条旧网站规则。"
-                });
             }
             if (addedDefaultRules > 0)
             {

@@ -139,6 +139,39 @@ internal static class GuardServiceInstaller
         }
     }
 
+    public static bool TryCleanupNetworkPolicies(out string message)
+    {
+        string? guardExecutable = LocateGuardExecutable();
+        if (guardExecutable is null)
+        {
+            message = "找不到 BlockGame.Guard.exe，后台服务启动后会继续清理网站策略。";
+            return false;
+        }
+
+        try
+        {
+            CommandResult result = RunProcess(
+                guardExecutable,
+                "--cleanup-network-policies");
+            if (result.ExitCode == 0)
+            {
+                message = "网站NRPT和浏览器DNS策略已立即清理。";
+                return true;
+            }
+
+            message = "立即清理网站策略失败：" + result.Output.Trim();
+            return false;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or InvalidOperationException)
+        {
+            message = "立即清理网站策略失败：" + exception.Message;
+            return false;
+        }
+    }
+
     private static string? LocateGuardExecutable()
     {
         string baseDirectory = AppContext.BaseDirectory;
@@ -507,9 +540,17 @@ internal static class GuardServiceInstaller
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("无法启动系统服务工具。 ");
-        string output = process.StandardOutput.ReadToEnd();
-        output += process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        Task<string> standardOutput = process.StandardOutput.ReadToEndAsync();
+        Task<string> standardError = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(30_000))
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit();
+            return new CommandResult(-1, "系统工具运行超时。");
+        }
+
+        string output = standardOutput.GetAwaiter().GetResult();
+        output += standardError.GetAwaiter().GetResult();
         return new CommandResult(process.ExitCode, output);
     }
 

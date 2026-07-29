@@ -16,7 +16,15 @@ internal sealed class GuardWorker
     private readonly AuditLog _auditLog;
     private readonly HeartbeatStore _heartbeatStore;
     private readonly HostsFileManager _hostsFileManager;
+    private readonly NrptPolicyManager _nrptPolicyManager;
+    private readonly BrowserDnsPolicyManager _browserDnsPolicyManager;
     private readonly Dictionary<string, DateTimeOffset> _lastFailureLogs = new();
+    private readonly Dictionary<string, DateTimeOffset> _lastWebsiteNotifications = new(
+        StringComparer.OrdinalIgnoreCase);
+    private readonly object _websiteNotificationLock = new();
+    private LocalDnsBlockServer? _dnsBlockServer;
+    private string? _websitePolicySignature;
+    private DateTimeOffset _nextWebsitePolicyRetryUtc = DateTimeOffset.MinValue;
 
     public GuardWorker(
         DataPaths paths,
@@ -29,6 +37,8 @@ internal sealed class GuardWorker
         _auditLog = auditLog;
         _heartbeatStore = heartbeatStore;
         _hostsFileManager = HostsFileManager.CreateDefault();
+        _nrptPolicyManager = new NrptPolicyManager(paths);
+        _browserDnsPolicyManager = new BrowserDnsPolicyManager(paths);
     }
 
     public async Task RunAsync(string mode, CancellationToken cancellationToken)
@@ -49,7 +59,7 @@ internal sealed class GuardWorker
         {
             try
             {
-                lastKnownGoodConfig = LoadConfigAndRemoveLegacyWebsiteRules();
+                lastKnownGoodConfig = LoadConfigAndApplyMigrations();
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -68,6 +78,7 @@ internal sealed class GuardWorker
             }
 
             DateTimeOffset nowUtc = DateTimeOffset.UtcNow;
+            SynchronizeWebsiteBlocking(lastKnownGoodConfig, nowUtc);
             if (!legacyHostsCleanupComplete && nowUtc >= nextLegacyHostsCleanupUtc)
             {
                 legacyHostsCleanupComplete = CleanupLegacyWebsiteRules();
@@ -90,6 +101,12 @@ internal sealed class GuardWorker
             }
         }
 
+        if (_dnsBlockServer is not null)
+        {
+            await _dnsBlockServer.DisposeAsync().ConfigureAwait(false);
+            _dnsBlockServer = null;
+        }
+
         TryAudit(new AuditEntry
         {
             EventType = "GuardStopped",
@@ -101,7 +118,7 @@ internal sealed class GuardWorker
     {
         try
         {
-            return LoadConfigAndRemoveLegacyWebsiteRules();
+            return LoadConfigAndApplyMigrations();
         }
         catch (Exception exception)
         {
@@ -115,22 +132,15 @@ internal sealed class GuardWorker
         }
     }
 
-    private AppConfig LoadConfigAndRemoveLegacyWebsiteRules()
+    private AppConfig LoadConfigAndApplyMigrations()
     {
         AppConfig config = _configStore.Load();
-        int removedWebsiteRules = SafetyPolicy.RemoveLegacyWebsiteRules(config);
+        bool normalized = SafetyPolicy.NormalizeFileNameRulePatterns(config);
+        normalized |= SafetyPolicy.NormalizeDomainRulePatterns(config);
         int addedDefaultRules = DefaultRulePresets.Apply(config);
-        if (removedWebsiteRules > 0 || addedDefaultRules > 0)
+        if (normalized || addedDefaultRules > 0)
         {
             _configStore.Save(config);
-        }
-        if (removedWebsiteRules > 0)
-        {
-            TryAudit(new AuditEntry
-            {
-                EventType = "WebsiteFeatureRemoved",
-                Message = $"网站屏蔽功能已移除，同时删除 {removedWebsiteRules} 条旧网站规则。"
-            });
         }
         if (addedDefaultRules > 0)
         {
@@ -142,6 +152,180 @@ internal sealed class GuardWorker
         }
 
         return config;
+    }
+
+    private void SynchronizeWebsiteBlocking(AppConfig config, DateTimeOffset nowUtc)
+    {
+        IReadOnlyList<WebsiteBlockRegistration> registrations =
+            BuildWebsiteRegistrations(config);
+        string signature = string.Join(
+            '|',
+            registrations
+                .OrderBy(registration => registration.Domain, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(registration => registration.RuleId, StringComparer.Ordinal)
+                .Select(registration => $"{registration.Domain}:{registration.RuleId}"));
+        if (string.Equals(signature, _websitePolicySignature, StringComparison.Ordinal)
+            || nowUtc < _nextWebsitePolicyRetryUtc)
+        {
+            return;
+        }
+
+        IReadOnlyList<string> domains = registrations
+            .Select(registration => registration.Domain)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        try
+        {
+            if (domains.Count > 0)
+            {
+                if (_dnsBlockServer is null)
+                {
+                    _dnsBlockServer = new LocalDnsBlockServer(
+                        OnWebsiteBlocked,
+                        exception => LogFailureWithThrottle(
+                            "dns-listener",
+                            "本机DNS监听发生错误：" + exception.Message));
+                    try
+                    {
+                        _dnsBlockServer.Start();
+                    }
+                    catch
+                    {
+                        _dnsBlockServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                        _dnsBlockServer = null;
+                        try
+                        {
+                            _nrptPolicyManager.Synchronize([]);
+                            _browserDnsPolicyManager.Restore();
+                        }
+                        catch
+                        {
+                            // Preserve the original listener error for the audit log.
+                        }
+
+                        throw;
+                    }
+                }
+
+                _dnsBlockServer.UpdateRegistrations(registrations);
+                TryApplyBrowserDnsPolicies();
+                _nrptPolicyManager.Synchronize(domains);
+            }
+            else
+            {
+                _nrptPolicyManager.Synchronize([]);
+                TryRestoreBrowserDnsPolicies();
+                _dnsBlockServer?.UpdateRegistrations([]);
+            }
+
+            _websitePolicySignature = signature;
+            _nextWebsitePolicyRetryUtc = DateTimeOffset.MinValue;
+            TryAudit(new AuditEntry
+            {
+                EventType = "WebsiteRulesApplied",
+                Message = domains.Count == 0
+                    ? "网站拦截规则已停用；BlockGame NRPT规则已清理，浏览器DNS策略已恢复。"
+                    : $"已同步 {domains.Count} 个网站域名；仅命中域名使用本机DNS拦截，未修改网卡DNS。"
+            });
+        }
+        catch (Exception exception)
+        {
+            _nextWebsitePolicyRetryUtc = nowUtc.Add(FailureLogInterval);
+            LogFailureWithThrottle(
+                "website-policy",
+                "同步网站拦截规则失败：" + exception.Message);
+        }
+    }
+
+    private void TryApplyBrowserDnsPolicies()
+    {
+        try
+        {
+            _browserDnsPolicyManager.Apply();
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException)
+        {
+            LogFailureWithThrottle(
+                "browser-doh-policy",
+                "浏览器加密DNS策略同步失败；NRPT网站拦截仍会继续尝试：" + exception.Message);
+        }
+    }
+
+    private void TryRestoreBrowserDnsPolicies()
+    {
+        try
+        {
+            _browserDnsPolicyManager.Restore();
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException
+                or System.Text.Json.JsonException)
+        {
+            LogFailureWithThrottle(
+                "browser-doh-policy-restore",
+                "恢复浏览器加密DNS策略失败：" + exception.Message);
+        }
+    }
+
+    private static IReadOnlyList<WebsiteBlockRegistration> BuildWebsiteRegistrations(
+        AppConfig config)
+    {
+        if (!config.ProtectionEnabled)
+        {
+            return [];
+        }
+
+        var registrations = new List<WebsiteBlockRegistration>();
+        foreach (BlockRule rule in config.Rules.Where(rule =>
+                     rule.Enabled && rule.Target == RuleTarget.Domain))
+        {
+            foreach (string domain in WebsiteDomainRules.SplitAndNormalize(rule.Pattern))
+            {
+                registrations.Add(new WebsiteBlockRegistration(
+                    domain,
+                    rule.Id,
+                    rule.Name));
+            }
+        }
+
+        return registrations
+            .GroupBy(registration => registration.Domain, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private void OnWebsiteBlocked(
+        WebsiteBlockRegistration registration,
+        string queryDomain)
+    {
+        DateTimeOffset nowUtc = DateTimeOffset.UtcNow;
+        lock (_websiteNotificationLock)
+        {
+            if (_lastWebsiteNotifications.TryGetValue(
+                    queryDomain,
+                    out DateTimeOffset previous)
+                && nowUtc - previous < FailureLogInterval)
+            {
+                return;
+            }
+
+            _lastWebsiteNotifications[queryDomain] = nowUtc;
+        }
+
+        bool notificationSent = DesktopNotifier.TryShowWebsiteBlocked(queryDomain);
+        TryAudit(new AuditEntry
+        {
+            EventType = "WebsiteBlocked",
+            Message = $"网站 {queryDomain} 已被拦截，命中规则“{registration.RuleName}”。",
+            Domain = queryDomain,
+            RuleId = registration.RuleId,
+            DesktopNotificationSent = notificationSent
+        });
     }
 
     private void ScanAndBlock(AppConfig config)
@@ -203,8 +387,8 @@ internal sealed class GuardWorker
             {
                 TryAudit(new AuditEntry
                 {
-                    EventType = "WebsiteFeatureRemoved",
-                    Message = "网站屏蔽功能已移除，旧 hosts 托管区块已清理。"
+                    EventType = "LegacyHostsCleanup",
+                    Message = "旧版 hosts 托管区块已清理；当前网站拦截不修改 hosts。"
                 });
             }
 

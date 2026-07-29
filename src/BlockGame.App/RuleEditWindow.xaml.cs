@@ -14,12 +14,20 @@ public partial class RuleEditWindow : Window
         InitializeComponent();
 
         RuleNameTextBox.Text = rule.Name;
-        RulePatternTextBox.Text = rule.Target == RuleTarget.FileName
-            ? string.Join(Environment.NewLine, SafetyPolicy.SplitFileNamePatterns(rule.Pattern))
-            : rule.Pattern;
+        RulePatternTextBox.Text = rule.Target switch
+        {
+            RuleTarget.FileName => string.Join(
+                Environment.NewLine,
+                SafetyPolicy.SplitFileNamePatterns(rule.Pattern)),
+            RuleTarget.Domain => string.Join(
+                Environment.NewLine,
+                WebsiteDomainRules.SplitAndNormalize(rule.Pattern)),
+            _ => rule.Pattern
+        };
         RuleTargetComboBox.SelectedIndex = rule.Target switch
         {
             RuleTarget.FullPath => 1,
+            RuleTarget.Domain => 2,
             _ => 0
         };
         Loaded += (_, _) =>
@@ -46,9 +54,10 @@ public partial class RuleEditWindow : Window
         PatternHelpText.Text = target switch
         {
             RuleTarget.FullPath => "匹配内容（完整 EXE 路径，支持 * 和 ?）",
+            RuleTarget.Domain => "网站域名（可一行一个或用 ; 分隔；域名规则同时覆盖其子域名）",
             _ => "匹配内容（可一行一个或用 ; 分隔，支持 * 和 ?，自动补 .exe）"
         };
-        BrowseExeButton.IsEnabled = true;
+        BrowseExeButton.IsEnabled = target != RuleTarget.Domain;
     }
 
     private void BrowseExeButton_Click(object sender, RoutedEventArgs e)
@@ -70,14 +79,11 @@ public partial class RuleEditWindow : Window
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         RuleTarget target = GetSelectedTarget();
-        string normalizedPattern = SafetyPolicy.NormalizeRulePattern(
-            target,
-            RulePatternTextBox.Text);
         var candidate = new BlockRule
         {
             Name = RuleNameTextBox.Text.Trim(),
             Target = target,
-            Pattern = normalizedPattern
+            Pattern = RulePatternTextBox.Text
         };
 
         string? validationError = SafetyPolicy.ValidateRule(candidate);
@@ -91,6 +97,7 @@ public partial class RuleEditWindow : Window
             return;
         }
 
+        candidate.Pattern = SafetyPolicy.NormalizeRulePattern(target, candidate.Pattern);
         RuleName = candidate.Name;
         Target = candidate.Target;
         Pattern = candidate.Pattern;

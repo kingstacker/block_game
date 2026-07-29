@@ -138,7 +138,7 @@ public partial class MainWindow : Window
         foreach (AuditEntry entry in entries
                      .Where(entry =>
                          entry.Success
-                         && entry.EventType == "ProcessBlocked"
+                         && entry.EventType is "ProcessBlocked" or "WebsiteBlocked"
                          && entry.DesktopNotificationSent != true)
                      .Reverse())
         {
@@ -148,12 +148,14 @@ public partial class MainWindow : Window
                 continue;
             }
 
-            newBlockNames.Add(GetBlockedApplicationName(entry));
+            newBlockNames.Add(entry.EventType == "WebsiteBlocked"
+                ? $"{entry.Domain ?? "该网站"} 网站已被拦截。"
+                : $"{GetBlockedApplicationName(entry)} 软件已被拦截。");
         }
 
-        foreach (string applicationName in newBlockNames.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string message in newBlockNames.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            _pendingBlockNotifications.Enqueue(applicationName);
+            _pendingBlockNotifications.Enqueue(message);
         }
 
         ShowPendingBlockNotifications();
@@ -290,9 +292,10 @@ public partial class MainWindow : Window
         RulePatternHelpText.Text = target switch
         {
             RuleTarget.FullPath => "匹配内容（完整 EXE 路径，支持 * 和 ?）",
+            RuleTarget.Domain => "网站域名（可一行一个或用 ; 分隔；poki.com 会同时屏蔽其子域名）",
             _ => "匹配内容（可一行一个或用 ; 分隔，支持 * 和 ?，自动补 .exe）"
         };
-        BrowseExeButton.IsEnabled = true;
+        BrowseExeButton.IsEnabled = target != RuleTarget.Domain;
     }
 
     private void AddRuleButton_Click(object sender, RoutedEventArgs e)
@@ -308,7 +311,7 @@ public partial class MainWindow : Window
         {
             Name = RuleNameTextBox.Text.Trim(),
             Target = target,
-            Pattern = SafetyPolicy.NormalizeRulePattern(target, RulePatternTextBox.Text),
+            Pattern = RulePatternTextBox.Text,
             Enabled = true
         };
 
@@ -319,6 +322,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        rule.Pattern = SafetyPolicy.NormalizeRulePattern(target, rule.Pattern);
         bool duplicate = _config.Rules.Any(existing =>
             existing.Target == rule.Target
             && string.Equals(existing.Pattern, rule.Pattern, StringComparison.OrdinalIgnoreCase));
@@ -350,13 +354,17 @@ public partial class MainWindow : Window
                 File.Delete(_paths.UninstallTokenFile);
             }
 
+            bool networkReset = GuardServiceInstaller.TryCleanupNetworkPolicies(
+                out string networkResetMessage);
             AppendAudit(
                 "DebugReset",
-                "已执行最高优先级调试复位：暂停拦截、解除锁定并删除全部规则。",
-                true);
+                "已执行最高优先级调试复位：暂停拦截、解除锁定并删除全部规则。"
+                    + networkResetMessage,
+                networkReset);
             RefreshRules();
             MessageBox.Show(
-                "调试复位完成：拦截已暂停，设置已解锁，全部规则已删除。",
+                "调试复位完成：拦截已暂停，设置已解锁，全部规则已删除。\n\n"
+                    + networkResetMessage,
                 "BlockGame",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -675,9 +683,8 @@ public partial class MainWindow : Window
         _showingBlockNotification = true;
         try
         {
-            while (_pendingBlockNotifications.TryDequeue(out string? applicationName))
+            while (_pendingBlockNotifications.TryDequeue(out string? message))
             {
-                string message = $"{applicationName} 软件已被拦截。";
                 if (IsVisible)
                 {
                     MessageBox.Show(
@@ -729,6 +736,7 @@ public partial class MainWindow : Window
             {
                 RuleTarget.FileName => "程序文件名",
                 RuleTarget.FullPath => "完整路径",
+                RuleTarget.Domain => "网站域名",
                 _ => "未知"
             };
             Pattern = rule.Pattern;
@@ -752,6 +760,7 @@ public partial class MainWindow : Window
             EventType = entry.EventType switch
             {
                 "ProcessBlocked" => "拦截事件",
+                "WebsiteBlocked" => "网站拦截",
                 "WebsiteRulesApplied" => "网站规则同步",
                 "DefaultRulesAdded" => "默认规则",
                 _ => entry.EventType

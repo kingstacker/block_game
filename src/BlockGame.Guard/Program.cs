@@ -26,6 +26,11 @@ internal static class Program
                 return 0;
             }
 
+            if (args.Contains("--cleanup-network-policies", StringComparer.OrdinalIgnoreCase))
+            {
+                return CleanupNetworkPolicies(paths, auditLog);
+            }
+
             int tokenArgument = Array.FindIndex(
                 args,
                 argument => string.Equals(argument, "--verify-uninstall-token", StringComparison.OrdinalIgnoreCase));
@@ -106,13 +111,66 @@ internal static class Program
             return 3;
         }
 
+        config.ProtectionEnabled = false;
+        config.ProtectionLocked = false;
+        config.UnlockRequestedAtUtc = null;
+        config.UnlockAvailableAtUtc = null;
         configStore.Save(config);
         if (File.Exists(paths.UninstallTokenFile))
         {
             File.Delete(paths.UninstallTokenFile);
         }
 
+        try
+        {
+            new NrptPolicyManager(paths).Synchronize([]);
+            new BrowserDnsPolicyManager(paths).Restore();
+        }
+        catch (Exception exception)
+        {
+            TryAppendAudit(
+                auditLog,
+                new AuditEntry
+                {
+                    EventType = "NetworkPolicyCleanupFailed",
+                    Message = "卸载前清理网站拦截策略失败：" + exception.Message,
+                    Success = false
+                });
+            Console.Error.WriteLine("卸载前清理网站拦截策略失败：" + exception.Message);
+            return 4;
+        }
+
         return 0;
+    }
+
+    private static int CleanupNetworkPolicies(DataPaths paths, AuditLog auditLog)
+    {
+        try
+        {
+            new NrptPolicyManager(paths).Synchronize([]);
+            new BrowserDnsPolicyManager(paths).Restore();
+            TryAppendAudit(
+                auditLog,
+                new AuditEntry
+                {
+                    EventType = "NetworkPoliciesReset",
+                    Message = "BlockGame网站NRPT和浏览器DNS策略已清理。"
+                });
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            TryAppendAudit(
+                auditLog,
+                new AuditEntry
+                {
+                    EventType = "NetworkPolicyCleanupFailed",
+                    Message = "清理网站拦截策略失败：" + exception.Message,
+                    Success = false
+                });
+            Console.Error.WriteLine(exception.Message);
+            return 4;
+        }
     }
 
     private static void TryAppendAudit(AuditLog auditLog, AuditEntry entry)
