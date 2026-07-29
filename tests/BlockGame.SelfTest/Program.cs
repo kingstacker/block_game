@@ -203,6 +203,26 @@ internal static class Program
             RuleMatcher.Match(config, new ProcessDescriptor(2002, "steam", null)) is not null,
             "游戏平台规则未匹配 Steam。 ");
         Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(2005, "WeGameMiniLoader.std.7.06.27.1446", null)) is not null,
+            "游戏平台规则未匹配带版本号的 WeGameMiniLoader。 ");
+        Assert(
+            RuleMatcher.Match(config, new ProcessDescriptor(2006, "GameLoader", null)) is not null,
+            "游戏平台规则未匹配当前DNF加载器。 ");
+        Assert(
+            RuleMatcher.Match(config, new ProcessDescriptor(2007, "DNF", null)) is not null,
+            "游戏平台规则未匹配DNF。 ");
+        Assert(
+            RuleMatcher.Match(config, new ProcessDescriptor(2008, "crossfire", null)) is not null,
+            "游戏平台规则未匹配CF。 ");
+        Assert(
+            RuleMatcher.Match(config, new ProcessDescriptor(2009, "LeagueClientUx", null)) is not null,
+            "游戏平台规则未匹配英雄联盟。 ");
+        Assert(
+            RuleMatcher.Match(config, new ProcessDescriptor(2010, "YuanShen", null)) is not null,
+            "游戏平台规则未匹配原神。 ");
+        Assert(
             RuleMatcher.Match(config, new ProcessDescriptor(2003, "QQLive", null)) is not null,
             "影音平台规则未匹配腾讯视频。 ");
         Assert(
@@ -235,6 +255,55 @@ internal static class Program
             resetByOldVersion.Rules.Count == 4
                 && resetByOldVersion.Rules.All(rule => !rule.Enabled),
             "修复旧调试复位后，默认规则数量或勾选状态不正确。 ");
+
+        var versionThreeConfig = new AppConfig
+        {
+            DefaultRulePresetVersion = 3,
+            Rules =
+            [
+                new BlockRule
+                {
+                    Name = "默认：常见游戏平台",
+                    Target = RuleTarget.FileName,
+                    Pattern = "WeGame.exe;WeGameClient.exe;tgp_daemon.exe",
+                    Enabled = true
+                }
+            ]
+        };
+        Assert(
+            DefaultRulePresets.Apply(versionThreeConfig) == 2,
+            "未升级现有WeGame默认规则。 ");
+        Assert(
+            versionThreeConfig.Rules[0].Pattern.Contains(
+                "WeGame*.exe",
+                StringComparison.OrdinalIgnoreCase),
+            "现有WeGame默认规则未补充通配模式。 ");
+        Assert(versionThreeConfig.Rules[0].Enabled, "升级默认规则时改变了原勾选状态。 ");
+
+        var versionFourConfig = new AppConfig
+        {
+            DefaultRulePresetVersion = 4,
+            Rules =
+            [
+                new BlockRule
+                {
+                    Name = "默认：常见游戏平台",
+                    Target = RuleTarget.FileName,
+                    Pattern = "WeGame*.exe;steam.exe",
+                    Enabled = true
+                }
+            ]
+        };
+        Assert(
+            DefaultRulePresets.Apply(versionFourConfig) == 1,
+            "未给现有默认规则补充常见游戏进程。 ");
+        Assert(
+            SafetyPolicy.SplitFileNamePatterns(versionFourConfig.Rules[0].Pattern)
+                .Contains("GameLoader.exe", StringComparer.OrdinalIgnoreCase)
+                && SafetyPolicy.SplitFileNamePatterns(versionFourConfig.Rules[0].Pattern)
+                    .Contains("crossfire.exe", StringComparer.OrdinalIgnoreCase),
+            "现有默认规则未补充DNF或CF进程。 ");
+        Assert(versionFourConfig.Rules[0].Enabled, "扩展常见游戏规则时改变了原勾选状态。 ");
     }
 
     private static void WebsiteDomainRulesTest()

@@ -4,16 +4,27 @@ namespace BlockGame.Core.Services;
 
 public static class DefaultRulePresets
 {
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 5;
+
+    public const string CommonGameExecutablesPattern =
+        "DNF*.exe;GameLoader.exe;"
+        + "crossfire.exe;CrossFire*.exe;CFLauncher*.exe;"
+        + "LeagueClient*.exe;VALORANT*.exe;"
+        + "TslGame.exe;cs2.exe;dota2.exe;"
+        + "YuanShen.exe;GenshinImpact.exe;StarRail.exe;ZenlessZoneZero.exe;"
+        + "NarakaBladepoint.exe;Overwatch.exe;Hearthstone.exe;"
+        + "r5apex.exe;FortniteClient-Win64-Shipping.exe;GTA5.exe;"
+        + "RobloxPlayerBeta.exe;MinecraftLauncher.exe;QQSpeed.exe";
 
     public const string CommonGamePlatformsPattern =
-        "WeGame.exe;WeGameClient.exe;tgp_daemon.exe;"
+        "WeGame*.exe;tgp_daemon.exe;"
         + "steam.exe;steamwebhelper.exe;steamchina.exe;"
         + "EpicGamesLauncher.exe;Battle.net.exe;"
         + "EADesktop.exe;EALauncher.exe;UbisoftConnect.exe;"
         + "RiotClientServices.exe;RiotClientUx.exe;"
         + "GalaxyClient.exe;GOGGalaxy.exe;XboxPcApp.exe;"
-        + "MuMuPlayer.exe;NemuPlayer.exe;dnplayer.exe;LDPlayer.exe;AndroidEmulatorEx.exe";
+        + "MuMuPlayer.exe;NemuPlayer.exe;dnplayer.exe;LDPlayer.exe;AndroidEmulatorEx.exe;"
+        + CommonGameExecutablesPattern;
 
     public const string CommonMediaPlatformsPattern =
         "QQLive.exe;QyClient.exe;IQIYI Video.exe;"
@@ -98,6 +109,22 @@ public static class DefaultRulePresets
                 CommonMediaWebsitesPattern);
         }
 
+        if (config.DefaultRulePresetVersion < 4)
+        {
+            added += MergeFileNamePatternIntoDefaultRule(
+                config,
+                "默认：常见游戏平台",
+                "WeGame*.exe");
+        }
+
+        if (config.DefaultRulePresetVersion < 5)
+        {
+            added += MergeFileNamePatternIntoDefaultRule(
+                config,
+                "默认：常见游戏平台",
+                CommonGameExecutablesPattern);
+        }
+
         config.DefaultRulePresetVersion = CurrentVersion;
         return added;
     }
@@ -138,4 +165,28 @@ public static class DefaultRulePresets
             RuleTarget.FileName => SafetyPolicy.NormalizeFileNamePattern(pattern),
             _ => pattern.Trim()
         };
+
+    private static int MergeFileNamePatternIntoDefaultRule(
+        AppConfig config,
+        string ruleName,
+        string pattern)
+    {
+        BlockRule? rule = config.Rules.FirstOrDefault(candidate =>
+            candidate.Target == RuleTarget.FileName
+            && string.Equals(candidate.Name, ruleName, StringComparison.OrdinalIgnoreCase));
+        if (rule is null)
+        {
+            return 0;
+        }
+
+        string mergedPattern = SafetyPolicy.NormalizeFileNamePattern(
+            $"{rule.Pattern};{pattern}");
+        if (string.Equals(rule.Pattern, mergedPattern, StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        rule.Pattern = mergedPattern;
+        return 1;
+    }
 }

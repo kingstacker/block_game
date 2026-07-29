@@ -55,8 +55,8 @@ public partial class App : System.Windows.Application
             {
                 auditLog.Append(new BlockGame.Core.Models.AuditEntry
                 {
-                    EventType = "DefaultRulesAdded",
-                    Message = $"已添加 {addedDefaultRules} 条默认规则，初始状态为停用。"
+                    EventType = "DefaultRulesUpdated",
+                    Message = $"已新增或更新 {addedDefaultRules} 条默认规则；新增规则默认为停用，已有规则保留原勾选状态。"
                 });
             }
 
