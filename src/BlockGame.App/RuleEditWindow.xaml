@@ -1,0 +1,63 @@
+<Window x:Class="BlockGame.App.RuleEditWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="修改规则"
+        Width="620"
+        Height="540"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="修改规则"
+                       FontSize="23"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource TextBrush}" />
+            <TextBlock Margin="0,7,0,0"
+                       Text="保存后守护服务会自动加载新规则。"
+                       Foreground="{StaticResource MutedTextBrush}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,22,0,0">
+            <TextBlock Text="规则名称" Margin="0,0,0,6" />
+            <TextBox x:Name="RuleNameTextBox" />
+
+            <TextBlock Text="匹配方式" Margin="0,16,0,6" />
+            <ComboBox x:Name="RuleTargetComboBox"
+                      SelectionChanged="RuleTargetComboBox_SelectionChanged">
+                <ComboBoxItem Content="程序文件名" Tag="FileName" />
+                <ComboBoxItem Content="完整路径" Tag="FullPath" />
+            </ComboBox>
+
+            <TextBlock x:Name="PatternHelpText"
+                       Text="匹配内容"
+                       Margin="0,16,0,6"
+                       Foreground="{StaticResource MutedTextBrush}" />
+            <DockPanel>
+                <Button x:Name="BrowseExeButton"
+                        DockPanel.Dock="Right"
+                        Style="{StaticResource SecondaryButton}"
+                        Margin="10,0,0,0"
+                        VerticalAlignment="Bottom"
+                        Content="选择 EXE"
+                        Click="BrowseExeButton_Click" />
+                <TextBox x:Name="RulePatternTextBox"
+                         Height="150"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalContentAlignment="Top"
+                         VerticalScrollBarVisibility="Auto" />
+            </DockPanel>
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Style="{StaticResource SecondaryButton}" Content="取消" Click="CancelButton_Click" />
+            <Button Style="{StaticResource PrimaryButton}" Margin="0" Content="保存修改" Click="SaveButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

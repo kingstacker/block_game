@@ -1,0 +1,9 @@
+bin/
+obj/
+artifacts/
+.dotnet-cli/
+.nuget/
+.build-appdata/
+*.user
+*.suo
+*.tmp

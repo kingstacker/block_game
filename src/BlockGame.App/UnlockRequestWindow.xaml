@@ -1,0 +1,33 @@
+<Window x:Class="BlockGame.App.UnlockRequestWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="申请解除保护"
+        Width="560"
+        Height="360"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="申请解除保护" FontSize="23" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+            <TextBlock Margin="0,7,0,0" Text="提交后不会立即解除；冷静期结束后可在当前管理界面完成解除。" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,20,0,0">
+            <TextBlock Text="请逐字输入以下确认文本" Margin="0,0,0,6" />
+            <Border Background="#F2F4F7" CornerRadius="6" Padding="12">
+                <TextBlock x:Name="RequiredText" TextWrapping="Wrap" FontWeight="SemiBold" />
+            </Border>
+            <TextBox x:Name="ConfirmationTextBox" Margin="0,10,0,0" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Style="{StaticResource SecondaryButton}" Content="取消" Click="CancelButton_Click" />
+            <Button Style="{StaticResource DangerButton}" Margin="0" Content="提交解除申请" Click="ConfirmButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>
