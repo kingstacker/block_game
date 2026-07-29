@@ -223,6 +223,18 @@ internal static class Program
             versionOneConfig.Rules.Count == 2
                 && versionOneConfig.Rules.All(rule => rule.Target == RuleTarget.Domain),
             "从版本1升级时错误地重新添加了旧的程序默认规则。 ");
+
+        var resetByOldVersion = new AppConfig
+        {
+            DefaultRulePresetVersion = 2
+        };
+        Assert(
+            DefaultRulePresets.Apply(resetByOldVersion) == 4,
+            "未修复旧调试复位删除的默认规则。 ");
+        Assert(
+            resetByOldVersion.Rules.Count == 4
+                && resetByOldVersion.Rules.All(rule => !rule.Enabled),
+            "修复旧调试复位后，默认规则数量或勾选状态不正确。 ");
     }
 
     private static void WebsiteDomainRulesTest()
@@ -342,7 +354,12 @@ internal static class Program
         Assert(config.UnlockRequestedAtUtc is null && config.UnlockAvailableAtUtc is null, "调试复位未清除解除申请。 ");
         Assert(config.UninstallTokenHashBase64 is null && config.UninstallAuthorizedUntilUtc is null, "调试复位未清除卸载授权。 ");
         Assert(config.PasswordThrottle.ConsecutiveFailures == 0, "调试复位未清除密码限流。 ");
-        Assert(config.Rules.Count == 0, "调试复位未删除规则。 ");
+        Assert(config.Rules.Count == 4, "调试复位未恢复四条默认规则。 ");
+        Assert(config.Rules.All(rule => !rule.Enabled), "调试复位后的默认规则仍处于勾选状态。 ");
+        Assert(config.Rules.All(rule => rule.Name.StartsWith("默认：", StringComparison.Ordinal)), "调试复位未删除自定义规则。 ");
+        Assert(
+            config.DefaultRulePresetVersion == DefaultRulePresets.CurrentVersion,
+            "调试复位后的默认规则版本不正确。 ");
     }
 
     private static void UninstallToken()

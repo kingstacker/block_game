@@ -4,7 +4,7 @@ namespace BlockGame.Core.Services;
 
 public static class DefaultRulePresets
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     public const string CommonGamePlatformsPattern =
         "WeGame.exe;WeGameClient.exe;tgp_daemon.exe;"
@@ -60,6 +60,32 @@ public static class DefaultRulePresets
 
         if (config.DefaultRulePresetVersion < 2)
         {
+            added += AddIfMissing(
+                config,
+                "默认：常见游戏网站",
+                RuleTarget.Domain,
+                CommonGameWebsitesPattern);
+            added += AddIfMissing(
+                config,
+                "默认：常见影音网站",
+                RuleTarget.Domain,
+                CommonMediaWebsitesPattern);
+        }
+
+        // Version 3 repairs configurations produced by the old debug reset,
+        // which cleared every rule while leaving the preset version unchanged.
+        if (config.DefaultRulePresetVersion < 3 && config.Rules.Count == 0)
+        {
+            added += AddIfMissing(
+                config,
+                "默认：常见游戏平台",
+                RuleTarget.FileName,
+                CommonGamePlatformsPattern);
+            added += AddIfMissing(
+                config,
+                "默认：常见影音平台",
+                RuleTarget.FileName,
+                CommonMediaPlatformsPattern);
             added += AddIfMissing(
                 config,
                 "默认：常见游戏网站",

@@ -361,12 +361,12 @@ public partial class MainWindow : Window
                 out string networkResetMessage);
             AppendAudit(
                 "DebugReset",
-                "已执行最高优先级调试复位：暂停拦截、解除锁定并删除全部规则。"
+                "已执行最高优先级调试复位：暂停拦截、解除锁定、删除自定义规则并恢复未启用的默认规则。"
                     + networkResetMessage,
                 networkReset);
             RefreshRules();
             MessageBox.Show(
-                "调试复位完成：拦截已暂停，设置已解锁，全部规则已删除。\n\n"
+                "调试复位完成：拦截已暂停，设置已解锁，自定义规则已删除；默认规则已恢复并保持未勾选。\n\n"
                     + networkResetMessage,
                 "BlockGame",
                 MessageBoxButton.OK,

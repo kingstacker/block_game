@@ -93,6 +93,12 @@ public static class ProtectionManager
         config.UnlockAvailableAtUtc = null;
         config.PasswordThrottle = new PasswordThrottle();
         config.Rules.Clear();
+        config.DefaultRulePresetVersion = 0;
+        DefaultRulePresets.Apply(config);
+        foreach (BlockRule rule in config.Rules)
+        {
+            rule.Enabled = false;
+        }
         ClearUninstallAuthorization(config);
     }
 
