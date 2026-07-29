@@ -11,6 +11,40 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Copy-PublishFiles {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDirectory
+    )
+
+    foreach ($file in Get-ChildItem -LiteralPath $SourceDirectory -File) {
+        Copy-Item -LiteralPath $file.FullName -Destination $DestinationDirectory -Force
+    }
+}
+
+function Assert-FilesMatch {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Expected,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Actual
+    )
+
+    if (-not (Test-Path -LiteralPath $Actual)) {
+        throw "Installed file is missing: $Actual"
+    }
+
+    $expectedHash = (Get-FileHash -LiteralPath $Expected -Algorithm SHA256).Hash
+    $actualHash = (Get-FileHash -LiteralPath $Actual -Algorithm SHA256).Hash
+    if (-not [string]::Equals($expectedHash, $actualHash, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Installed file verification failed: $Actual"
+    }
+}
+
 if (-not (Test-IsAdministrator)) {
     throw 'Run install.ps1 from an elevated PowerShell window.'
 }
@@ -25,8 +59,19 @@ $guardSource = Join-Path $PublishRoot 'guard'
 $appSource = Join-Path $PublishRoot 'app'
 $guardBinary = Join-Path $guardSource 'BlockGame.Guard.exe'
 $appBinary = Join-Path $appSource 'BlockGame.App.exe'
-if (-not (Test-Path -LiteralPath $guardBinary) -or -not (Test-Path -LiteralPath $appBinary)) {
+$guardCore = Join-Path $guardSource 'BlockGame.Core.dll'
+$appCore = Join-Path $appSource 'BlockGame.Core.dll'
+if (-not (Test-Path -LiteralPath $guardBinary) -or
+    -not (Test-Path -LiteralPath $appBinary) -or
+    -not (Test-Path -LiteralPath $guardCore) -or
+    -not (Test-Path -LiteralPath $appCore)) {
     throw "Publish files not found. Run scripts\build.ps1 first: $PublishRoot"
+}
+
+$guardCoreHash = (Get-FileHash -LiteralPath $guardCore -Algorithm SHA256).Hash
+$appCoreHash = (Get-FileHash -LiteralPath $appCore -Algorithm SHA256).Hash
+if (-not [string]::Equals($guardCoreHash, $appCoreHash, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'App and guard publish outputs contain different BlockGame.Core.dll files. Rebuild before installing.'
 }
 
 $installDir = Join-Path ${env:ProgramFiles} 'BlockGame'
@@ -49,8 +94,16 @@ if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
 }
 
 New-Item -ItemType Directory -Force -Path $installDir, $dataDir | Out-Null
-Copy-Item -Path (Join-Path $guardSource '*') -Destination $installDir -Recurse -Force
-Copy-Item -Path (Join-Path $appSource '*') -Destination $installDir -Recurse -Force
+Copy-PublishFiles -SourceDirectory $guardSource -DestinationDirectory $installDir
+Copy-PublishFiles -SourceDirectory $appSource -DestinationDirectory $installDir
+
+# Both executables load this shared assembly from the installation directory.
+# Copy it explicitly last and verify it so a mixed-version install cannot appear successful.
+Copy-Item -LiteralPath $appCore -Destination (Join-Path $installDir 'BlockGame.Core.dll') -Force
+Assert-FilesMatch -Expected $appBinary -Actual (Join-Path $installDir 'BlockGame.App.exe')
+Assert-FilesMatch -Expected $guardBinary -Actual (Join-Path $installDir 'BlockGame.Guard.exe')
+Assert-FilesMatch -Expected $appCore -Actual (Join-Path $installDir 'BlockGame.Core.dll')
+
 Copy-Item -LiteralPath (Join-Path $PublishRoot 'uninstall-installed.ps1') -Destination $uninstallScript -Force
 
 # Keep the data directory private to SYSTEM and Administrators. The elevated UI and service can both access it.
