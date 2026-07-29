@@ -4,7 +4,7 @@ namespace BlockGame.Core.Services;
 
 public static class DefaultRulePresets
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     public const string CommonGamePlatformsPattern =
         "WeGame.exe;WeGameClient.exe;tgp_daemon.exe;"
@@ -22,6 +22,19 @@ public static class DefaultRulePresets
         + "QQMusic.exe;cloudmusic.exe;KuGou.exe;KwMusic.exe;"
         + "MiguMusic.exe;SodaMusic.exe;Spotify.exe";
 
+    public const string CommonGameWebsitesPattern =
+        "wegame.com.cn;steampowered.com;steamcommunity.com;steamchina.com;"
+        + "epicgames.com;battle.net;xbox.com;playstation.com;nintendo.com.hk;"
+        + "taptap.cn;4399.com;7k7k.com;biligame.com;"
+        + "game.qq.com;game.163.com;miyoushe.com;wanmei.com;37.com";
+
+    public const string CommonMediaWebsitesPattern =
+        "iqiyi.com;v.qq.com;youku.com;bilibili.com;mgtv.com;"
+        + "douyin.com;kuaishou.com;ixigua.com;haokan.baidu.com;"
+        + "huya.com;douyu.com;acfun.cn;le.com;pptv.com;tv.sohu.com;"
+        + "music.163.com;y.qq.com;qqmusic.qq.com;kugou.com;kuwo.cn;"
+        + "music.migu.cn;ximalaya.com;qingting.fm;spotify.com";
+
     public static int Apply(AppConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -31,26 +44,50 @@ public static class DefaultRulePresets
         }
 
         int added = 0;
-        added += AddIfMissing(
-            config,
-            "默认：常见游戏平台",
-            CommonGamePlatformsPattern);
-        added += AddIfMissing(
-            config,
-            "默认：常见影音平台",
-            CommonMediaPlatformsPattern);
+        if (config.DefaultRulePresetVersion < 1)
+        {
+            added += AddIfMissing(
+                config,
+                "默认：常见游戏平台",
+                RuleTarget.FileName,
+                CommonGamePlatformsPattern);
+            added += AddIfMissing(
+                config,
+                "默认：常见影音平台",
+                RuleTarget.FileName,
+                CommonMediaPlatformsPattern);
+        }
+
+        if (config.DefaultRulePresetVersion < 2)
+        {
+            added += AddIfMissing(
+                config,
+                "默认：常见游戏网站",
+                RuleTarget.Domain,
+                CommonGameWebsitesPattern);
+            added += AddIfMissing(
+                config,
+                "默认：常见影音网站",
+                RuleTarget.Domain,
+                CommonMediaWebsitesPattern);
+        }
+
         config.DefaultRulePresetVersion = CurrentVersion;
         return added;
     }
 
-    private static int AddIfMissing(AppConfig config, string name, string pattern)
+    private static int AddIfMissing(
+        AppConfig config,
+        string name,
+        RuleTarget target,
+        string pattern)
     {
-        string normalizedPattern = SafetyPolicy.NormalizeFileNamePattern(pattern);
+        string normalizedPattern = NormalizePattern(target, pattern);
         bool exists = config.Rules.Any(rule =>
-            rule.Target == RuleTarget.FileName
+            rule.Target == target
             && (string.Equals(rule.Name, name, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(
-                    SafetyPolicy.NormalizeFileNamePattern(rule.Pattern),
+                    NormalizePattern(target, rule.Pattern),
                     normalizedPattern,
                     StringComparison.OrdinalIgnoreCase)));
         if (exists)
@@ -61,10 +98,18 @@ public static class DefaultRulePresets
         config.Rules.Add(new BlockRule
         {
             Name = name,
-            Target = RuleTarget.FileName,
+            Target = target,
             Pattern = normalizedPattern,
             Enabled = false
         });
         return 1;
     }
+
+    private static string NormalizePattern(RuleTarget target, string pattern)
+        => target switch
+        {
+            RuleTarget.Domain => WebsiteDomainRules.NormalizePattern(pattern),
+            RuleTarget.FileName => SafetyPolicy.NormalizeFileNamePattern(pattern),
+            _ => pattern.Trim()
+        };
 }

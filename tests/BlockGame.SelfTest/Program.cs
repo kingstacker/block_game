@@ -160,14 +160,39 @@ internal static class Program
             ]
         };
 
-        Assert(DefaultRulePresets.Apply(config) == 2, "首次迁移未添加两条默认规则。 ");
-        Assert(config.Rules.Count == 3, "添加默认规则时破坏了用户原有规则。 ");
+        Assert(DefaultRulePresets.Apply(config) == 4, "首次迁移未添加四条默认规则。 ");
+        Assert(config.Rules.Count == 5, "添加默认规则时破坏了用户原有规则。 ");
 
         BlockRule gameRule = config.Rules.Single(rule => rule.Name == "默认：常见游戏平台");
         BlockRule mediaRule = config.Rules.Single(rule => rule.Name == "默认：常见影音平台");
-        Assert(!gameRule.Enabled && !mediaRule.Enabled, "默认规则不应在升级后自动启用。 ");
+        BlockRule gameWebsiteRule = config.Rules.Single(rule => rule.Name == "默认：常见游戏网站");
+        BlockRule mediaWebsiteRule = config.Rules.Single(rule => rule.Name == "默认：常见影音网站");
+        Assert(
+            !gameRule.Enabled
+                && !mediaRule.Enabled
+                && !gameWebsiteRule.Enabled
+                && !mediaWebsiteRule.Enabled,
+            "默认规则不应在升级后自动启用。 ");
         Assert(SafetyPolicy.ValidateRule(gameRule) is null, "游戏平台默认规则未通过安全校验。 ");
         Assert(SafetyPolicy.ValidateRule(mediaRule) is null, "影音平台默认规则未通过安全校验。 ");
+        Assert(SafetyPolicy.ValidateRule(gameWebsiteRule) is null, "游戏网站默认规则未通过安全校验。 ");
+        Assert(SafetyPolicy.ValidateRule(mediaWebsiteRule) is null, "影音网站默认规则未通过安全校验。 ");
+        Assert(
+            WebsiteDomainRules.SplitAndNormalize(gameWebsiteRule.Pattern)
+                .Contains("wegame.com.cn", StringComparer.OrdinalIgnoreCase)
+                && WebsiteDomainRules.SplitAndNormalize(gameWebsiteRule.Pattern)
+                    .Contains("steampowered.com", StringComparer.OrdinalIgnoreCase)
+                && WebsiteDomainRules.SplitAndNormalize(gameWebsiteRule.Pattern)
+                    .Contains("4399.com", StringComparer.OrdinalIgnoreCase),
+            "游戏网站默认规则缺少常见平台。 ");
+        Assert(
+            WebsiteDomainRules.SplitAndNormalize(mediaWebsiteRule.Pattern)
+                .Contains("iqiyi.com", StringComparer.OrdinalIgnoreCase)
+                && WebsiteDomainRules.SplitAndNormalize(mediaWebsiteRule.Pattern)
+                    .Contains("v.qq.com", StringComparer.OrdinalIgnoreCase)
+                && WebsiteDomainRules.SplitAndNormalize(mediaWebsiteRule.Pattern)
+                    .Contains("bilibili.com", StringComparer.OrdinalIgnoreCase),
+            "影音网站默认规则缺少常见平台。 ");
 
         gameRule.Enabled = true;
         mediaRule.Enabled = true;
@@ -185,7 +210,19 @@ internal static class Program
             "影音平台规则未匹配网易云音乐。 ");
 
         Assert(DefaultRulePresets.Apply(config) == 0, "默认规则被重复添加。 ");
-        Assert(config.Rules.Count == 3, "重复迁移改变了规则数量。 ");
+        Assert(config.Rules.Count == 5, "重复迁移改变了规则数量。 ");
+
+        var versionOneConfig = new AppConfig
+        {
+            DefaultRulePresetVersion = 1
+        };
+        Assert(
+            DefaultRulePresets.Apply(versionOneConfig) == 2,
+            "从版本1升级时未补充两条网站默认规则。 ");
+        Assert(
+            versionOneConfig.Rules.Count == 2
+                && versionOneConfig.Rules.All(rule => rule.Target == RuleTarget.Domain),
+            "从版本1升级时错误地重新添加了旧的程序默认规则。 ");
     }
 
     private static void WebsiteDomainRulesTest()
