@@ -9,6 +9,7 @@ internal sealed class NrptPolicyManager
 {
     private const string SynchronizeScript = """
         $ErrorActionPreference = 'Stop'
+        $ConfirmPreference = 'None'
         $ProgressPreference = 'SilentlyContinue'
         try {
             $managedComment = 'BlockGame managed website blocking'
@@ -54,7 +55,11 @@ internal sealed class NrptPolicyManager
                     @($rule.NameServers) -contains '127.0.0.1' -and
                     @($rule.NameServers) -contains '::1'
                 if (-not $keep) {
-                    Remove-DnsClientNrptRule -Name $rule.Name -Confirm:$false -ErrorAction Stop
+                    Remove-DnsClientNrptRule `
+                        -Name $rule.Name `
+                        -Force `
+                        -Confirm:$false `
+                        -ErrorAction Stop
                     $changed = $true
                 }
             }
@@ -70,6 +75,7 @@ internal sealed class NrptPolicyManager
                         -NameServers @('127.0.0.1', '::1') `
                         -DisplayName ('BlockGame: ' + $namespace) `
                         -Comment $managedComment `
+                        -Confirm:$false `
                         -ErrorAction Stop
                     $changed = $true
                 }
