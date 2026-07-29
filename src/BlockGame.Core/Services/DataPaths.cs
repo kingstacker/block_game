@@ -30,6 +30,10 @@ public sealed class DataPaths
 
     public string BrowserDnsPolicyBackupFile => Path.Combine(RootDirectory, "browser-dns-policy-backup.json");
 
+    public string BrowserUrlBlockPolicyStateFile => Path.Combine(
+        RootDirectory,
+        "browser-url-block-policy-state.json");
+
     public static DataPaths CreateDefault()
     {
         var overrideDirectory = Environment.GetEnvironmentVariable("BLOCKGAME_DATA_DIR");

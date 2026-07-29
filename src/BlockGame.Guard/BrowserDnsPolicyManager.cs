@@ -6,6 +6,8 @@ namespace BlockGame.Guard;
 
 internal sealed class BrowserDnsPolicyManager
 {
+    private const int MaximumUrlBlocklistEntries = 1000;
+
     private static readonly PolicyTarget[] Targets =
     [
         new(
@@ -30,6 +32,12 @@ internal sealed class BrowserDnsPolicyManager
             1)
     ];
 
+    private static readonly string[] UrlBlocklistKeyPaths =
+    [
+        @"SOFTWARE\Policies\Google\Chrome\URLBlocklist",
+        @"SOFTWARE\Policies\Microsoft\Edge\URLBlocklist"
+    ];
+
     private readonly DataPaths _paths;
 
     public BrowserDnsPolicyManager(DataPaths paths)
@@ -37,7 +45,7 @@ internal sealed class BrowserDnsPolicyManager
         _paths = paths;
     }
 
-    public void Apply()
+    public void Apply(IReadOnlyCollection<string> domains)
     {
         _paths.EnsureDirectory();
         if (!File.Exists(_paths.BrowserDnsPolicyBackupFile))
@@ -58,10 +66,14 @@ internal sealed class BrowserDnsPolicyManager
                     $"无法创建浏览器策略注册表项 {target.KeyPath}。");
             key.SetValue(target.ValueName, target.AppliedValue, target.Kind);
         }
+
+        ApplyUrlBlocklists(domains);
     }
 
     public void Restore()
     {
+        RestoreUrlBlocklists();
+
         if (!File.Exists(_paths.BrowserDnsPolicyBackupFile))
         {
             return;
@@ -110,6 +122,101 @@ internal sealed class BrowserDnsPolicyManager
         File.Delete(_paths.BrowserDnsPolicyBackupFile);
     }
 
+    private void ApplyUrlBlocklists(IReadOnlyCollection<string> domains)
+    {
+        RestoreUrlBlocklists();
+
+        string[] filters = domains
+            .Select(domain => domain.Trim().ToLowerInvariant())
+            .Where(domain => !string.IsNullOrWhiteSpace(domain))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(domain => domain, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (filters.Length == 0)
+        {
+            return;
+        }
+
+        var state = new BrowserUrlBlockPolicyState();
+        foreach (string keyPath in UrlBlocklistKeyPaths)
+        {
+            using RegistryKey key = Registry.LocalMachine.CreateSubKey(keyPath, writable: true)
+                ?? throw new UnauthorizedAccessException(
+                    $"无法创建浏览器网址拦截策略注册表项 {keyPath}。");
+            var occupiedNames = key.GetValueNames()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            int nextValueNumber = 1;
+            foreach (string filter in filters)
+            {
+                while (occupiedNames.Contains(nextValueNumber.ToString()))
+                {
+                    nextValueNumber++;
+                }
+
+                if (nextValueNumber > MaximumUrlBlocklistEntries)
+                {
+                    throw new InvalidOperationException(
+                        $"浏览器网址拦截策略 {keyPath} 已超过 {MaximumUrlBlocklistEntries} 条限制。");
+                }
+
+                string valueName = nextValueNumber.ToString();
+                occupiedNames.Add(valueName);
+                state.Entries.Add(new BrowserUrlBlockPolicyEntry
+                {
+                    KeyPath = keyPath,
+                    ValueName = valueName,
+                    AppliedValue = filter
+                });
+                nextValueNumber++;
+            }
+        }
+
+        File.WriteAllText(
+            _paths.BrowserUrlBlockPolicyStateFile,
+            JsonSerializer.Serialize(state, JsonDefaults.Create(indented: true)));
+
+        foreach (BrowserUrlBlockPolicyEntry entry in state.Entries)
+        {
+            using RegistryKey key = Registry.LocalMachine.CreateSubKey(
+                    entry.KeyPath,
+                    writable: true)
+                ?? throw new UnauthorizedAccessException(
+                    $"无法创建浏览器网址拦截策略注册表项 {entry.KeyPath}。");
+            key.SetValue(entry.ValueName, entry.AppliedValue, RegistryValueKind.String);
+        }
+    }
+
+    private void RestoreUrlBlocklists()
+    {
+        if (!File.Exists(_paths.BrowserUrlBlockPolicyStateFile))
+        {
+            return;
+        }
+
+        BrowserUrlBlockPolicyState state = JsonSerializer.Deserialize<BrowserUrlBlockPolicyState>(
+                File.ReadAllText(_paths.BrowserUrlBlockPolicyStateFile),
+                JsonDefaults.Create())
+            ?? new BrowserUrlBlockPolicyState();
+        foreach (BrowserUrlBlockPolicyEntry entry in state.Entries)
+        {
+            using RegistryKey? key = Registry.LocalMachine.OpenSubKey(
+                entry.KeyPath,
+                writable: true);
+            object? current = key?.GetValue(
+                entry.ValueName,
+                null,
+                RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (key is not null
+                && current is string currentValue
+                && currentValue.Equals(entry.AppliedValue, StringComparison.OrdinalIgnoreCase))
+            {
+                key.DeleteValue(entry.ValueName, throwOnMissingValue: false);
+            }
+        }
+
+        File.Delete(_paths.BrowserUrlBlockPolicyStateFile);
+    }
+
     private static PolicyValueBackup Capture(PolicyTarget target)
     {
         using RegistryKey? key = Registry.LocalMachine.OpenSubKey(target.KeyPath);
@@ -146,6 +253,18 @@ internal sealed class BrowserDnsPolicyManager
     private sealed class BrowserDnsPolicyBackup
     {
         public List<PolicyValueBackup> Values { get; set; } = [];
+    }
+
+    private sealed class BrowserUrlBlockPolicyState
+    {
+        public List<BrowserUrlBlockPolicyEntry> Entries { get; set; } = [];
+    }
+
+    private sealed class BrowserUrlBlockPolicyEntry
+    {
+        public string KeyPath { get; set; } = string.Empty;
+        public string ValueName { get; set; } = string.Empty;
+        public string AppliedValue { get; set; } = string.Empty;
     }
 
     private sealed class PolicyValueBackup

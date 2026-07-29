@@ -80,6 +80,11 @@ $uninstallScript = Join-Path $dataDir 'uninstall-installed.ps1'
 $maintenanceStopFile = Join-Path $dataDir 'maintenance-stop.request'
 $serviceName = 'BlockGameGuard'
 
+# The WPF control panel loads BlockGame.Core.dll from the installation directory.
+# Stop it before copying so Windows cannot leave the new app beside an old loaded core assembly.
+Get-Process -Name 'BlockGame.App' -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction Stop
+
 if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
     Set-Content -LiteralPath $maintenanceStopFile -Value ([Guid]::NewGuid().ToString('N')) -Encoding ASCII

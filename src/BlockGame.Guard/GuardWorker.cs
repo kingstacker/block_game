@@ -208,7 +208,7 @@ internal sealed class GuardWorker
                 }
 
                 _dnsBlockServer.UpdateRegistrations(registrations);
-                TryApplyBrowserDnsPolicies();
+                TryApplyBrowserPolicies(domains);
                 _nrptPolicyManager.Synchronize(domains);
             }
             else
@@ -237,11 +237,11 @@ internal sealed class GuardWorker
         }
     }
 
-    private void TryApplyBrowserDnsPolicies()
+    private void TryApplyBrowserPolicies(IReadOnlyCollection<string> domains)
     {
         try
         {
-            _browserDnsPolicyManager.Apply();
+            _browserDnsPolicyManager.Apply(domains);
         }
         catch (Exception exception) when (
             exception is IOException
