@@ -10,63 +10,79 @@ internal sealed class NrptPolicyManager
     private const string SynchronizeScript = """
         $ErrorActionPreference = 'Stop'
         $ProgressPreference = 'SilentlyContinue'
-        $managedComment = 'BlockGame managed website blocking'
-        $changed = $false
-        $desiredDomains = @()
-        if (Test-Path -LiteralPath $env:BLOCKGAME_NRPT_FILE) {
-            $json = Get-Content -Raw -LiteralPath $env:BLOCKGAME_NRPT_FILE
-            if (-not [string]::IsNullOrWhiteSpace($json)) {
-                $desiredDomains = @($json | ConvertFrom-Json)
+        try {
+            $managedComment = 'BlockGame managed website blocking'
+            $changed = $false
+            $desiredDomains = @()
+            if (Test-Path -LiteralPath $env:BLOCKGAME_NRPT_FILE) {
+                $json = Get-Content -Raw -LiteralPath $env:BLOCKGAME_NRPT_FILE
+                if (-not [string]::IsNullOrWhiteSpace($json)) {
+                    $parsedDomains = ConvertFrom-Json -InputObject $json
+                    $desiredDomains = @(
+                        $parsedDomains |
+                            ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } |
+                            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                            Sort-Object -Unique
+                    )
+                }
             }
-        }
-        $desiredNamespaces = @()
-        foreach ($domain in $desiredDomains) {
-            $desiredNamespaces += [string]$domain
-            $desiredNamespaces += '.' + [string]$domain
-        }
-        $desiredNamespaces = @($desiredNamespaces | Sort-Object -Unique)
-        $allRules = @(Get-DnsClientNrptRule -ErrorAction Stop)
-        $managedRules = @($allRules | Where-Object { $_.Comment -eq $managedComment })
-        foreach ($namespace in $desiredNamespaces) {
-            $conflict = @($allRules | Where-Object {
-                $_.Comment -ne $managedComment -and
-                @($_.Namespace) -contains $namespace
-            })
-            if ($conflict.Count -gt 0) {
-                throw "域名 $namespace 已存在其他 NRPT 规则，BlockGame 未覆盖该规则。"
+            $desiredNamespaces = @()
+            foreach ($domain in $desiredDomains) {
+                $desiredNamespaces += $domain
+                $desiredNamespaces += '.' + $domain
             }
-        }
-        foreach ($rule in $managedRules) {
-            $ruleNamespaces = @($rule.Namespace)
-            $keep = $ruleNamespaces.Count -eq 1 -and
-                $desiredNamespaces -contains [string]$ruleNamespaces[0] -and
-                @($rule.NameServers) -contains '127.0.0.1' -and
-                @($rule.NameServers) -contains '::1'
-            if (-not $keep) {
-                Remove-DnsClientNrptRule -Name $rule.Name -Confirm:$false -ErrorAction Stop
-                $changed = $true
+            $desiredNamespaces = @(
+                $desiredNamespaces |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    Sort-Object -Unique
+            )
+            $allRules = @(Get-DnsClientNrptRule -ErrorAction Stop)
+            $managedRules = @($allRules | Where-Object { $_.Comment -eq $managedComment })
+            foreach ($namespace in $desiredNamespaces) {
+                $conflict = @($allRules | Where-Object {
+                    $_.Comment -ne $managedComment -and
+                    @($_.Namespace) -contains $namespace
+                })
+                if ($conflict.Count -gt 0) {
+                    throw "域名 $namespace 已存在其他 NRPT 规则，BlockGame 未覆盖该规则。"
+                }
             }
-        }
-        $managedRules = @(Get-DnsClientNrptRule -ErrorAction Stop |
-            Where-Object { $_.Comment -eq $managedComment })
-        foreach ($namespace in $desiredNamespaces) {
-            $exists = @($managedRules | Where-Object {
-                @($_.Namespace) -contains $namespace
-            }).Count -gt 0
-            if (-not $exists) {
-                Add-DnsClientNrptRule `
-                    -Namespace $namespace `
-                    -NameServers @('127.0.0.1', '::1') `
-                    -DisplayName ('BlockGame: ' + $namespace) `
-                    -Comment $managedComment `
-                    -ErrorAction Stop
-                $changed = $true
+            foreach ($rule in $managedRules) {
+                $ruleNamespaces = @($rule.Namespace)
+                $keep = $ruleNamespaces.Count -eq 1 -and
+                    $desiredNamespaces -contains [string]$ruleNamespaces[0] -and
+                    @($rule.NameServers) -contains '127.0.0.1' -and
+                    @($rule.NameServers) -contains '::1'
+                if (-not $keep) {
+                    Remove-DnsClientNrptRule -Name $rule.Name -Confirm:$false -ErrorAction Stop
+                    $changed = $true
+                }
             }
+            $managedRules = @(Get-DnsClientNrptRule -ErrorAction Stop |
+                Where-Object { $_.Comment -eq $managedComment })
+            foreach ($namespace in $desiredNamespaces) {
+                $exists = @($managedRules | Where-Object {
+                    @($_.Namespace) -contains $namespace
+                }).Count -gt 0
+                if (-not $exists) {
+                    Add-DnsClientNrptRule `
+                        -Namespace $namespace `
+                        -NameServers @('127.0.0.1', '::1') `
+                        -DisplayName ('BlockGame: ' + $namespace) `
+                        -Comment $managedComment `
+                        -ErrorAction Stop
+                    $changed = $true
+                }
+            }
+            if ($changed) {
+                Clear-DnsClientCache
+            }
+            Write-Output ('BlockGame NRPT synchronized: ' + $desiredDomains.Count)
         }
-        if ($changed) {
-            Clear-DnsClientCache
+        catch {
+            [Console]::Error.WriteLine($_.Exception.Message)
+            exit 1
         }
-        Write-Output ('BlockGame NRPT synchronized: ' + $desiredDomains.Count)
         """;
 
     private readonly DataPaths _paths;
@@ -112,14 +128,17 @@ internal sealed class NrptPolicyManager
 
         using Process process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("无法启动 Windows DNS 策略工具。 ");
-        string standardOutput = process.StandardOutput.ReadToEnd();
-        string standardError = process.StandardError.ReadToEnd();
+        Task<string> standardOutputTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> standardErrorTask = process.StandardError.ReadToEndAsync();
         if (!process.WaitForExit(20_000))
         {
             process.Kill(entireProcessTree: true);
+            process.WaitForExit();
             throw new TimeoutException("同步 Windows NRPT 网站规则超时。 ");
         }
 
+        string standardOutput = standardOutputTask.GetAwaiter().GetResult();
+        string standardError = standardErrorTask.GetAwaiter().GetResult();
         if (process.ExitCode != 0)
         {
             string detail = string.IsNullOrWhiteSpace(standardError)
