@@ -162,15 +162,18 @@ public partial class MainWindow : Window
     }
 
     public bool AuthenticateForOpen()
+        => AuthenticateForAction("打开 BlockGame 管理界面");
+
+    public bool AuthenticateForAction(string actionDescription)
     {
         ReloadConfig();
-        var dialog = new PasswordPromptWindow("打开 BlockGame 管理界面");
+        var dialog = new PasswordPromptWindow(actionDescription);
         if (dialog.ShowDialog() != true)
         {
             return false;
         }
 
-        return VerifyPasswordValue(dialog.Password, "打开 BlockGame 管理界面");
+        return VerifyPasswordValue(dialog.Password, actionDescription);
     }
 
     private bool VerifyPasswordValue(string password, string actionDescription)

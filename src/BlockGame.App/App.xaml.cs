@@ -216,6 +216,11 @@ public partial class App : System.Windows.Application
 
     private void ExitControlPanel(MainWindow mainWindow)
     {
+        if (!mainWindow.AuthenticateForAction("退出 BlockGame 控制面板"))
+        {
+            return;
+        }
+
         _exitRequested = true;
         if (_trayIcon is not null)
         {
