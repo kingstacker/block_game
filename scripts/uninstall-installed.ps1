@@ -11,6 +11,21 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function ConvertTo-QuotedProcessArgument {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    # Windows paths cannot contain a double quote. Rejecting one here keeps the
+    # command line unambiguous when Windows PowerShell joins ArgumentList items.
+    if ($Value.Contains('"')) {
+        throw 'A cleanup process argument contains an invalid double quote.'
+    }
+
+    return '"' + $Value + '"'
+}
+
 if (-not (Test-IsAdministrator)) {
     $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -WaitForProcessId {1}' -f `
         $PSCommandPath, $WaitForProcessId
@@ -136,13 +151,15 @@ Remove-Item -LiteralPath `$CleanupScript -Force -ErrorAction SilentlyContinue
 Set-Content -LiteralPath $cleanupScript -Value $cleanup -Encoding UTF8
 # Explicit elevation is required here: this helper removes files from Program Files
 # after the uninstaller executable has exited, so it cannot rely on its parent token.
+# Windows PowerShell joins ArgumentList array items into one command line. Preserve
+# path boundaries explicitly so "C:\Program Files\BlockGame" remains one argument.
 Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
-    '-File', $cleanupScript,
-    '-InstallDir', $installDir,
-    '-DataDir', $dataDir,
-    '-CleanupScript', $cleanupScript,
+    '-File', (ConvertTo-QuotedProcessArgument $cleanupScript),
+    '-InstallDir', (ConvertTo-QuotedProcessArgument $installDir),
+    '-DataDir', (ConvertTo-QuotedProcessArgument $dataDir),
+    '-CleanupScript', (ConvertTo-QuotedProcessArgument $cleanupScript),
     '-WaitForProcessId', $WaitForProcessId
 )
 Write-Host 'BlockGame uninstall authorized; cleanup will finish after the service exits.'
