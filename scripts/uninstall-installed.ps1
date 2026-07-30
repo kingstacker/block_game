@@ -42,6 +42,13 @@ if ($LASTEXITCODE -ne 0) {
     throw 'The uninstall authorization is invalid, expired, or protection is still locked.'
 }
 
+# The management UI may have started the uninstaller and still be holding its
+# configuration or audit files open. Stop it before the deferred cleanup runs.
+Get-Process -Name 'BlockGame.App' -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name 'BlockGame.App' -ErrorAction SilentlyContinue |
+    Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+
 Set-Content -LiteralPath $maintenanceStopFile -Value ([Guid]::NewGuid().ToString('N')) -Encoding ASCII
 try {
     Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
@@ -59,11 +66,45 @@ param([string]`$InstallDir, [string]`$DataDir, [string]`$CleanupScript)
 Start-Sleep -Seconds 2
 `$expectedInstall = [IO.Path]::GetFullPath((Join-Path `$env:ProgramFiles 'BlockGame'))
 `$expectedData = [IO.Path]::GetFullPath((Join-Path `$env:ProgramData 'BlockGame'))
+
+function Remove-BlockGameDirectory {
+    param(
+        [string]`$Path,
+        [int]`$MaxAttempts = 30
+    )
+
+    for (`$attempt = 1; `$attempt -le `$MaxAttempts; `$attempt++) {
+        if (-not (Test-Path -LiteralPath `$Path)) {
+            return `$true
+        }
+
+        try {
+            Remove-Item -LiteralPath `$Path -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            Start-Sleep -Seconds 1
+            continue
+        }
+
+        if (-not (Test-Path -LiteralPath `$Path)) {
+            return `$true
+        }
+
+        Start-Sleep -Seconds 1
+    }
+
+    return -not (Test-Path -LiteralPath `$Path)
+}
+
 if ([IO.Path]::GetFullPath(`$InstallDir) -eq `$expectedInstall -and (Test-Path -LiteralPath `$InstallDir)) {
-    Remove-Item -LiteralPath `$InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Remove-BlockGameDirectory -Path `$InstallDir)) {
+        Write-Error "Unable to remove BlockGame installation directory: `$InstallDir"
+    }
 }
 if ([IO.Path]::GetFullPath(`$DataDir) -eq `$expectedData -and (Test-Path -LiteralPath `$DataDir)) {
-    Remove-Item -LiteralPath `$DataDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Remove-BlockGameDirectory -Path `$DataDir)) {
+        Write-Error "Unable to remove BlockGame data directory: `$DataDir"
+    }
 }
 Remove-Item -LiteralPath `$CleanupScript -Force -ErrorAction SilentlyContinue
 "@
