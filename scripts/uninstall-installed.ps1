@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [int]$WaitForProcessId = 0
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -10,19 +12,26 @@ function Test-IsAdministrator {
 }
 
 if (-not (Test-IsAdministrator)) {
-    $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $PSCommandPath
+    $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -WaitForProcessId {1}' -f `
+        $PSCommandPath, $WaitForProcessId
     Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments
     exit 0
 }
 
-$installDir = Join-Path ${env:ProgramFiles} 'BlockGame'
+$nativeProgramFiles = if ([string]::IsNullOrWhiteSpace($env:ProgramW6432)) {
+    $env:ProgramFiles
+}
+else {
+    $env:ProgramW6432
+}
+$installDir = Join-Path $nativeProgramFiles 'BlockGame'
 $dataDir = Join-Path ${env:ProgramData} 'BlockGame'
 $guardExe = Join-Path $installDir 'BlockGame.Guard.exe'
 $tokenFile = Join-Path $dataDir 'uninstall.token'
 $maintenanceStopFile = Join-Path $dataDir 'maintenance-stop.request'
 $serviceName = 'BlockGameGuard'
 
-$expectedInstall = [IO.Path]::GetFullPath((Join-Path ${env:ProgramFiles} 'BlockGame'))
+$expectedInstall = [IO.Path]::GetFullPath((Join-Path $nativeProgramFiles 'BlockGame'))
 $expectedData = [IO.Path]::GetFullPath((Join-Path ${env:ProgramData} 'BlockGame'))
 if ([IO.Path]::GetFullPath($installDir) -ne $expectedInstall -or [IO.Path]::GetFullPath($dataDir) -ne $expectedData) {
     throw 'Uninstall target path validation failed.'
@@ -59,12 +68,28 @@ finally {
 & sc.exe delete $serviceName | Out-Null
 Remove-Item -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\BlockGame' -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path ${env:ProgramData} 'Microsoft\Windows\Start Menu\Programs\BlockGame.lnk') -Force -ErrorAction SilentlyContinue
+$uninstallShortcutName = (-join @([char]0x5378, [char]0x8F7D, ' BlockGame.lnk'))
+Remove-Item -LiteralPath (Join-Path ${env:ProgramData} "Microsoft\Windows\Start Menu\Programs\$uninstallShortcutName") -Force -ErrorAction SilentlyContinue
 
 $cleanupScript = Join-Path $env:TEMP ('BlockGameCleanup-' + [Guid]::NewGuid().ToString('N') + '.ps1')
 $cleanup = @"
-param([string]`$InstallDir, [string]`$DataDir, [string]`$CleanupScript)
-Start-Sleep -Seconds 2
-`$expectedInstall = [IO.Path]::GetFullPath((Join-Path `$env:ProgramFiles 'BlockGame'))
+param(
+    [string]`$InstallDir,
+    [string]`$DataDir,
+    [string]`$CleanupScript,
+    [int]`$WaitForProcessId
+)
+if (`$WaitForProcessId -gt 0) {
+    Wait-Process -Id `$WaitForProcessId -Timeout 30 -ErrorAction SilentlyContinue
+}
+Start-Sleep -Seconds 1
+`$nativeProgramFiles = if ([string]::IsNullOrWhiteSpace(`$env:ProgramW6432)) {
+    `$env:ProgramFiles
+}
+else {
+    `$env:ProgramW6432
+}
+`$expectedInstall = [IO.Path]::GetFullPath((Join-Path `$nativeProgramFiles 'BlockGame'))
 `$expectedData = [IO.Path]::GetFullPath((Join-Path `$env:ProgramData 'BlockGame'))
 
 function Remove-BlockGameDirectory {
@@ -117,6 +142,7 @@ Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList @(
     '-File', $cleanupScript,
     '-InstallDir', $installDir,
     '-DataDir', $dataDir,
-    '-CleanupScript', $cleanupScript
+    '-CleanupScript', $cleanupScript,
+    '-WaitForProcessId', $WaitForProcessId
 )
 Write-Host 'BlockGame uninstall authorized; cleanup will finish after the service exits.'
