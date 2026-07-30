@@ -94,6 +94,10 @@ param(
     [string]`$CleanupScript,
     [int]`$WaitForProcessId
 )
+# The uninstaller is normally launched with the installation directory as its
+# working directory. Leave it before deletion so this helper does not lock the
+# directory that it is responsible for removing.
+Set-Location -LiteralPath `$env:SystemRoot
 if (`$WaitForProcessId -gt 0) {
     Wait-Process -Id `$WaitForProcessId -Timeout 30 -ErrorAction SilentlyContinue
 }
@@ -153,7 +157,7 @@ Set-Content -LiteralPath $cleanupScript -Value $cleanup -Encoding UTF8
 # after the uninstaller executable has exited, so it cannot rely on its parent token.
 # Windows PowerShell joins ArgumentList array items into one command line. Preserve
 # path boundaries explicitly so "C:\Program Files\BlockGame" remains one argument.
-Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList @(
+Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -WorkingDirectory $env:SystemRoot -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-File', (ConvertTo-QuotedProcessArgument $cleanupScript),
