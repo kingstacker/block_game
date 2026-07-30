@@ -150,18 +150,27 @@ function Remove-BlockGameDirectory {
 
 Remove-Item -LiteralPath `$CleanupScript -Force -ErrorAction SilentlyContinue
 
+# Keep the generated script ASCII-safe because Windows PowerShell 5.1 can read a
+# UTF-8 script without a BOM using the active ANSI code page.
+`$successMessage = [Text.Encoding]::Unicode.GetString(
+    [Convert]::FromBase64String('QgBsAG8AYwBrAEcAYQBtAGUAIADyXXhTfY+MWxBiAjA='))
+`$dialogTitle = [Text.Encoding]::Unicode.GetString(
+    [Convert]::FromBase64String('eFN9jyAAQgBsAG8AYwBrAEcAYQBtAGUA'))
+`$failureMessage = [Text.Encoding]::Unicode.GetString(
+    [Convert]::FromBase64String('QgBsAG8AYwBrAEcAYQBtAGUAIAB4U32PBW4GdCpn/YBoUeiQjFsQYgz/94vAaOVniVvFiO52VV8vZiZUzU6riHZR1k4Leo9eYFModQIw'))
+
 Add-Type -AssemblyName PresentationFramework
 if (`$cleanupSucceeded) {
     [void][System.Windows.MessageBox]::Show(
-        'BlockGame 已卸载完成。',
-        '卸载 BlockGame',
+        `$successMessage,
+        `$dialogTitle,
         [System.Windows.MessageBoxButton]::OK,
         [System.Windows.MessageBoxImage]::Information)
 }
 else {
     [void][System.Windows.MessageBox]::Show(
-        'BlockGame 卸载清理未能全部完成，请检查安装目录是否仍被其他程序占用。',
-        '卸载 BlockGame',
+        `$failureMessage,
+        `$dialogTitle,
         [System.Windows.MessageBoxButton]::OK,
         [System.Windows.MessageBoxImage]::Error)
 }
