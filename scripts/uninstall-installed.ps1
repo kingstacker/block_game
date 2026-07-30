@@ -140,17 +140,31 @@ function Remove-BlockGameDirectory {
     return -not (Test-Path -LiteralPath `$Path)
 }
 
-if ([IO.Path]::GetFullPath(`$InstallDir) -eq `$expectedInstall -and (Test-Path -LiteralPath `$InstallDir)) {
-    if (-not (Remove-BlockGameDirectory -Path `$InstallDir)) {
-        Write-Error "Unable to remove BlockGame installation directory: `$InstallDir"
-    }
-}
-if ([IO.Path]::GetFullPath(`$DataDir) -eq `$expectedData -and (Test-Path -LiteralPath `$DataDir)) {
-    if (-not (Remove-BlockGameDirectory -Path `$DataDir)) {
-        Write-Error "Unable to remove BlockGame data directory: `$DataDir"
-    }
-}
+`$installRemoved =
+    [IO.Path]::GetFullPath(`$InstallDir) -eq `$expectedInstall -and
+    (Remove-BlockGameDirectory -Path `$InstallDir)
+`$dataRemoved =
+    [IO.Path]::GetFullPath(`$DataDir) -eq `$expectedData -and
+    (Remove-BlockGameDirectory -Path `$DataDir)
+`$cleanupSucceeded = `$installRemoved -and `$dataRemoved
+
 Remove-Item -LiteralPath `$CleanupScript -Force -ErrorAction SilentlyContinue
+
+Add-Type -AssemblyName PresentationFramework
+if (`$cleanupSucceeded) {
+    [void][System.Windows.MessageBox]::Show(
+        'BlockGame 已卸载完成。',
+        '卸载 BlockGame',
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Information)
+}
+else {
+    [void][System.Windows.MessageBox]::Show(
+        'BlockGame 卸载清理未能全部完成，请检查安装目录是否仍被其他程序占用。',
+        '卸载 BlockGame',
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Error)
+}
 "@
 Set-Content -LiteralPath $cleanupScript -Value $cleanup -Encoding UTF8
 # Explicit elevation is required here: this helper removes files from Program Files
