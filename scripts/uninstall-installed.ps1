@@ -109,7 +109,9 @@ if ([IO.Path]::GetFullPath(`$DataDir) -eq `$expectedData -and (Test-Path -Litera
 Remove-Item -LiteralPath `$CleanupScript -Force -ErrorAction SilentlyContinue
 "@
 Set-Content -LiteralPath $cleanupScript -Value $cleanup -Encoding UTF8
-Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
+# Explicit elevation is required here: this helper removes files from Program Files
+# after the uninstaller executable has exited, so it cannot rely on its parent token.
+Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-File', $cleanupScript,
