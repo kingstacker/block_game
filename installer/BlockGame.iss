@@ -48,7 +48,7 @@ Source: "..\artifacts\publish\uninstall-installed.ps1"; DestDir: "{tmp}\BlockGam
 Source: "..\scripts\install.ps1"; DestDir: "{tmp}\BlockGameInstaller"; Flags: ignoreversion deleteafterinstall
 
 [Run]
-Filename: "{autopf}\BlockGame\BlockGame.App.exe"; Description: "安装完成后运行 BlockGame"; Flags: postinstall nowait skipifsilent
+Filename: "{autopf}\BlockGame\BlockGame.App.exe"; Description: "安装完成后运行 BlockGame"; Flags: postinstall nowait runascurrentuser skipifsilent
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
