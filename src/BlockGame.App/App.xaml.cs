@@ -28,6 +28,9 @@ public partial class App : System.Windows.Application
 
             if (!config.SetupCompleted)
             {
+                // Closing the modal first-run window must not end the entire
+                // application before the main window has been created.
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 var setupWindow = new PasswordSetupWindow(configStore, auditLog);
                 if (setupWindow.ShowDialog() != true)
                 {
@@ -79,6 +82,7 @@ public partial class App : System.Windows.Application
             var mainWindow = new MainWindow(paths, configStore, auditLog, heartbeatStore);
             MainWindow = mainWindow;
             InitializeTrayIcon(mainWindow);
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
             if (setupCompletedNow)
             {
                 RevealMainWindow(mainWindow);
