@@ -81,6 +81,7 @@ finally {
     Remove-Item -LiteralPath $maintenanceStopFile -Force -ErrorAction SilentlyContinue
 }
 & sc.exe delete $serviceName | Out-Null
+& schtasks.exe /Delete /TN 'BlockGameAutoStart' /F 2>$null | Out-Null
 Remove-Item -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\BlockGame' -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path ${env:ProgramData} 'Microsoft\Windows\Start Menu\Programs\BlockGame.lnk') -Force -ErrorAction SilentlyContinue
 $uninstallShortcutName = (-join @([char]0x5378, [char]0x8F7D, ' BlockGame.lnk'))

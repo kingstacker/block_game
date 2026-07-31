@@ -14,6 +14,7 @@ internal sealed record GuardHealthResult(bool Healthy, bool ActionTaken, string 
 internal static class GuardServiceInstaller
 {
     private const string ServiceName = "BlockGameGuard";
+    private const string AutoStartTaskName = "BlockGameAutoStart";
     private const uint ScManagerConnect = 0x0001;
     private const uint ScManagerCreateService = 0x0002;
     private const uint ServiceQueryStatus = 0x0004;
@@ -79,6 +80,7 @@ internal static class GuardServiceInstaller
             }
 
             ConfigureRecovery();
+            EnsureAutoStart();
             if (!TryStartService(out string startMessage))
             {
                 return new GuardInstallResult(false, false, startMessage);
@@ -114,6 +116,7 @@ internal static class GuardServiceInstaller
             }
 
             ConfigureRecovery();
+            EnsureAutoStart();
             if (!TryStartService(out string startMessage))
             {
                 return new GuardInstallResult(false, true, startMessage);
@@ -174,6 +177,7 @@ internal static class GuardServiceInstaller
 
         // 无论服务是否在跑，都补刷一次恢复配置，防止它被 sc failure 清空。
         ConfigureRecovery();
+        EnsureAutoStart();
 
         if (TryQueryServiceState(out int state) && state == ServiceRunning)
         {
@@ -586,6 +590,45 @@ internal static class GuardServiceInstaller
             "reset=",
             "86400");
         _ = RunSc("failureflag", ServiceName, "1");
+    }
+
+    /// <summary>
+    /// 用“登录时触发、以最高权限运行”的计划任务实现开机自启。控制面板要求管理员
+    /// 权限,若用注册表 Run 键会在每次登录弹 UAC;计划任务则静默提权启动托盘看门狗。
+    /// </summary>
+    private static void EnsureAutoStart()
+    {
+        try
+        {
+            string? appExecutable = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(appExecutable) || !File.Exists(appExecutable))
+            {
+                return;
+            }
+
+            // /TR 传入原始路径,由 .NET 按需加引号;Task Scheduler 会把带空格的
+            // 完整字符串当作映像路径执行。/F 覆盖同名任务以便随版本更新刷新路径。
+            _ = RunProcess(
+                Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
+                "/Create",
+                "/TN",
+                AutoStartTaskName,
+                "/TR",
+                appExecutable,
+                "/SC",
+                "ONLOGON",
+                "/RL",
+                "HIGHEST",
+                "/F");
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or InvalidOperationException
+                or System.ComponentModel.Win32Exception)
+        {
+            // 自启注册失败不应阻断服务安装;下次启动会再次尝试。
+        }
     }
 
     private static void TryProtectDataDirectory(string directory, out string? warning)
