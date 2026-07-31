@@ -606,15 +606,16 @@ internal static class GuardServiceInstaller
                 return;
             }
 
-            // /TR 传入原始路径,由 .NET 按需加引号;Task Scheduler 会把带空格的
-            // 完整字符串当作映像路径执行。/F 覆盖同名任务以便随版本更新刷新路径。
+            // /TR 必须把映像路径和静默启动参数作为一个完整命令传入；/F 覆盖同名
+            // 任务，以便升级后刷新程序路径和启动模式。
+            string taskCommand = StartupArguments.BuildAutoStartCommand(appExecutable);
             _ = RunProcess(
                 Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
                 "/Create",
                 "/TN",
                 AutoStartTaskName,
                 "/TR",
-                appExecutable,
+                taskCommand,
                 "/SC",
                 "ONLOGON",
                 "/RL",

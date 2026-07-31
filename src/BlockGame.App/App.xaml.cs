@@ -19,15 +19,20 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs eventArgs)
     {
         base.OnStartup(eventArgs);
+        bool autoStart = StartupArguments.IsAutoStart(eventArgs.Args);
 
         if (!TryClaimSingleInstance())
         {
             // 两个控制面板同时读改写配置会互相覆盖规则、锁状态和密码限流计数。
-            MessageBox.Show(
-                "BlockGame 已在运行。请通过任务栏托盘图标打开管理界面。",
-                "BlockGame",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            if (!autoStart)
+            {
+                MessageBox.Show(
+                    "BlockGame 已在运行。请通过任务栏托盘图标打开管理界面。",
+                    "BlockGame",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+
             Shutdown();
             return;
         }
@@ -43,6 +48,13 @@ public partial class App : System.Windows.Application
 
             if (!config.SetupCompleted)
             {
+                // 计划任务不应在尚未完成首次配置时弹出任何界面。
+                if (autoStart)
+                {
+                    Shutdown();
+                    return;
+                }
+
                 // Closing the modal first-run window must not end the entire
                 // application before the main window has been created.
                 ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -85,7 +97,7 @@ public partial class App : System.Windows.Application
                 Message = guardInstall.Message,
                 Success = guardInstall.Success
             });
-            if (!guardInstall.Success)
+            if (!guardInstall.Success && !autoStart)
             {
                 MessageBox.Show(
                     guardInstall.Message + "\n\n你仍可以查看和编辑规则，但后台拦截服务尚未运行。",
@@ -93,6 +105,15 @@ public partial class App : System.Windows.Application
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
+
+            auditLog.Append(new BlockGame.Core.Models.AuditEntry
+            {
+                EventType = "ControlPanelStarted",
+                Message = autoStart
+                    ? "BlockGame 已通过开机自启动进入静默托盘模式。"
+                    : "BlockGame 控制面板已启动。",
+                Success = true
+            });
 
             var mainWindow = new MainWindow(paths, configStore, auditLog, heartbeatStore);
             MainWindow = mainWindow;
@@ -102,27 +123,43 @@ public partial class App : System.Windows.Application
             {
                 RevealMainWindow(mainWindow);
             }
-            else
+            else if (!autoStart)
             {
                 TryOpenMainWindow(mainWindow);
             }
         }
         catch (UnauthorizedAccessException exception)
         {
-            MessageBox.Show(
-                "无法访问 BlockGame 数据目录。请确认程序已使用管理员权限运行。\n\n" + exception.Message,
-                "BlockGame",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+            if (autoStart)
+            {
+                TryAppendStartupFailure(exception);
+            }
+            else
+            {
+                MessageBox.Show(
+                    "无法访问 BlockGame 数据目录。请确认程序已使用管理员权限运行。\n\n" + exception.Message,
+                    "BlockGame",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+
             Shutdown(1);
         }
         catch (Exception exception)
         {
-            MessageBox.Show(
-                "程序初始化失败：\n\n" + exception.Message,
-                "BlockGame",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+            if (autoStart)
+            {
+                TryAppendStartupFailure(exception);
+            }
+            else
+            {
+                MessageBox.Show(
+                    "程序初始化失败：\n\n" + exception.Message,
+                    "BlockGame",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+
             Shutdown(1);
         }
     }
@@ -184,17 +221,10 @@ public partial class App : System.Windows.Application
         var openItem = new Forms.ToolStripMenuItem("打开 BlockGame");
         openItem.Click += (_, _) => TryOpenMainWindow(mainWindow);
 
-        var resetItem = new Forms.ToolStripMenuItem("调试一键复位（最高优先级）")
-        {
-            ForeColor = Color.FromArgb(217, 45, 32)
-        };
-        resetItem.Click += (_, _) => mainWindow.RunDebugReset();
-
         var exitItem = new Forms.ToolStripMenuItem("退出控制面板（守护服务继续运行）");
         exitItem.Click += (_, _) => ExitControlPanel(mainWindow);
 
         menu.Items.Add(openItem);
-        menu.Items.Add(resetItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(exitItem);
 
@@ -287,5 +317,23 @@ public partial class App : System.Windows.Application
 
         mainWindow.Close();
         Shutdown();
+    }
+
+    private static void TryAppendStartupFailure(Exception exception)
+    {
+        try
+        {
+            var paths = DataPaths.CreateDefault();
+            new AuditLog(paths).Append(new BlockGame.Core.Models.AuditEntry
+            {
+                EventType = "ControlPanelAutoStartFailed",
+                Message = "静默托盘启动失败：" + exception.Message,
+                Success = false
+            });
+        }
+        catch
+        {
+            // 静默启动失败时不能再因日志写入失败弹窗或抛出二次异常。
+        }
     }
 }

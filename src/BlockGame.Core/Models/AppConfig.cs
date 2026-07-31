@@ -12,6 +12,8 @@ public sealed class AppConfig
 
     public PasswordThrottle PasswordThrottle { get; set; } = new();
 
+    public ProtectionMode ProtectionMode { get; set; } = ProtectionMode.Strict;
+
     public bool ProtectionEnabled { get; set; }
 
     public bool ProtectionLocked { get; set; }

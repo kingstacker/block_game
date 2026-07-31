@@ -9,8 +9,45 @@ public static class ProtectionManager
     public static void EnableAndLock(AppConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
+        config.ProtectionMode = ProtectionMode.Strict;
         config.ProtectionEnabled = true;
         config.ProtectionLocked = true;
+        config.UnlockRequestedAtUtc = null;
+        config.UnlockAvailableAtUtc = null;
+        ClearUninstallAuthorization(config);
+    }
+
+    public static void ChangeMode(AppConfig config, ProtectionMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (!Enum.IsDefined(mode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+
+        if (config.ProtectionLocked && config.ProtectionMode != mode)
+        {
+            throw new InvalidOperationException("严格模式已锁定，必须等待冷静期结束并完成解除后才能切换模式。 ");
+        }
+
+        config.ProtectionMode = mode;
+        ClearUninstallAuthorization(config);
+    }
+
+    public static void EnablePreview(AppConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (config.ProtectionLocked)
+        {
+            throw new InvalidOperationException("严格模式已锁定，必须先完成解除流程。 ");
+        }
+
+        if (config.ProtectionMode != ProtectionMode.Preview)
+        {
+            throw new InvalidOperationException("当前不是预览屏蔽模式。 ");
+        }
+
+        config.ProtectionEnabled = true;
         config.UnlockRequestedAtUtc = null;
         config.UnlockAvailableAtUtc = null;
         ClearUninstallAuthorization(config);
@@ -115,13 +152,20 @@ public static class ProtectionManager
         ClearUninstallAuthorization(config);
     }
 
-    public static void ResetForDebug(AppConfig config)
+    public static void RestoreDefaults(AppConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
+        if (config.ProtectionLocked)
+        {
+            throw new InvalidOperationException("设置已锁定，必须先完成解除流程。 ");
+        }
+
         config.ProtectionEnabled = false;
         config.ProtectionLocked = false;
+        config.ProtectionMode = ProtectionMode.Strict;
         config.UnlockRequestedAtUtc = null;
         config.UnlockAvailableAtUtc = null;
+        config.UnlockDelayMinutes = 24 * 60;
         config.PasswordThrottle = new PasswordThrottle();
         config.Rules.Clear();
         config.DefaultRulePresetVersion = 0;

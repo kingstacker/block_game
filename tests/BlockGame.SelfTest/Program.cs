@@ -1,3 +1,6 @@
+using System.IO.Compression;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using BlockGame.Core.Models;
 using BlockGame.Core.Services;
 
@@ -20,13 +23,18 @@ internal static class Program
             ("关键系统进程安全名单", SafetyList),
             ("自身组件路径校验", OwnComponentPathVerification),
             ("完整路径规则通配校验", FullPathRuleValidation),
-            ("最高优先级调试复位", DebugReset),
+            ("快捷方式生成规则", ShortcutRuleFromLnk),
+            ("开机静默启动参数", AutoStartArguments),
+            ("预览与严格模式状态机", ProtectionModes),
+            ("旧配置默认严格模式", LegacyConfigDefaultsToStrict),
+            ("恢复默认设置", RestoreDefaults),
             ("冷静期单位换算", UnlockDelayUnitConversion),
             ("解除冷静期", UnlockCooldown),
             ("锁定期间延长冷静期", UnlockDelayExtension),
             ("一次性卸载令牌", UninstallToken),
             ("密码保护卸载授权", PasswordProtectedUninstall),
             ("配置和审计持久化", Persistence),
+            ("诊断日志导出", DiagnosticLogExport),
             ("审计日志轮转", AuditRotation)
         };
 
@@ -318,6 +326,68 @@ internal static class Program
         Assert(
             SafetyPolicy.ValidateRule(rule) is not null,
             "以通配符开头的完整路径规则通过了校验。 ");
+    }
+
+    private static void ShortcutRuleFromLnk()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string root = Path.Combine(Path.GetTempPath(), "ShortcutRuleSelfTest", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string targetPath = Path.Combine(root, "Demo Game.exe");
+            string shortcutPath = Path.Combine(root, "演示游戏.lnk");
+            File.WriteAllBytes(targetPath, [0x4D, 0x5A]);
+            CreateWindowsShortcut(shortcutPath, targetPath, "--profile preview", root);
+
+            ShortcutTargetInfo target = ShortcutTargetResolver.Resolve(shortcutPath);
+            Assert(
+                string.Equals(
+                    Path.GetFullPath(target.TargetPath),
+                    Path.GetFullPath(targetPath),
+                    StringComparison.OrdinalIgnoreCase),
+                "快捷方式目标 EXE 解析错误。 ");
+            Assert(
+                target.Arguments.Contains("--profile preview", StringComparison.Ordinal),
+                "快捷方式启动参数未读取。 ");
+
+            BlockRule rule = ShortcutRuleFactory.CreateRule(target);
+            Assert(rule.Name == "演示游戏", "生成的规则名称没有使用快捷方式名称。 ");
+            Assert(rule.Target == RuleTarget.FullPath, "快捷方式没有生成完整路径规则。 ");
+            Assert(rule.Enabled, "快捷方式生成的规则未默认启用。 ");
+            Assert(
+                string.Equals(rule.Pattern, targetPath, StringComparison.OrdinalIgnoreCase),
+                "快捷方式生成的规则路径错误。 ");
+
+            string textTarget = Path.Combine(root, "readme.txt");
+            File.WriteAllText(textTarget, "test");
+            bool nonExecutableRejected = false;
+            try
+            {
+                ShortcutRuleFactory.CreateRule(
+                    new ShortcutTargetInfo(shortcutPath, textTarget, string.Empty, root));
+            }
+            catch (InvalidDataException)
+            {
+                nonExecutableRejected = true;
+            }
+
+            Assert(nonExecutableRejected, "非 EXE 快捷方式目标仍生成了软件规则。 ");
+        }
+        finally
+        {
+            string fullRoot = Path.GetFullPath(root);
+            string expectedParent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "ShortcutRuleSelfTest"));
+            if (fullRoot.StartsWith(expectedParent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                && Directory.Exists(fullRoot))
+            {
+                Directory.Delete(fullRoot, recursive: true);
+            }
+        }
     }
 
     private static void DefaultRules()
@@ -669,12 +739,141 @@ internal static class Program
             "分钟未正确换算回月。 ");
     }
 
-    private static void DebugReset()
+    private static void AutoStartArguments()
+    {
+        Assert(
+            StartupArguments.IsAutoStart(["--autostart"]),
+            "未识别标准静默启动参数。 ");
+        Assert(
+            StartupArguments.IsAutoStart(["--AUTOSTART"]),
+            "静默启动参数未忽略大小写。 ");
+        Assert(
+            !StartupArguments.IsAutoStart(["--other"]),
+            "无关参数被误识别为静默启动。 ");
+        string executable = Path.Combine(Path.GetTempPath(), "Block Game", "BlockGame.App.exe");
+        string expected = $"\"{Path.GetFullPath(executable)}\" --autostart";
+        Assert(
+            string.Equals(
+                StartupArguments.BuildAutoStartCommand(executable),
+                expected,
+                StringComparison.Ordinal),
+            "计划任务的静默启动命令格式错误。 ");
+    }
+
+    private static void ProtectionModes()
     {
         var config = new AppConfig
         {
+            UnlockDelayMinutes = 60,
+            Rules = [new BlockRule { Name = "Test", Pattern = "test.exe", Enabled = true }]
+        };
+        Assert(config.ProtectionMode == ProtectionMode.Strict, "新配置没有默认使用严格模式。 ");
+
+        ProtectionManager.ChangeMode(config, ProtectionMode.Preview);
+        ProtectionManager.EnablePreview(config);
+        Assert(
+            config.ProtectionMode == ProtectionMode.Preview
+                && config.ProtectionEnabled
+                && !config.ProtectionLocked,
+            "预览屏蔽未能在不锁定的情况下启用。 ");
+
+        ProtectionManager.DisableProtection(config);
+        Assert(!config.ProtectionEnabled, "预览屏蔽无法立即暂停。 ");
+        ProtectionManager.EnablePreview(config);
+
+        ProtectionManager.ChangeMode(config, ProtectionMode.Strict);
+        Assert(
+            config.ProtectionMode == ProtectionMode.Strict
+                && config.ProtectionEnabled
+                && !config.ProtectionLocked,
+            "从预览切回严格模式时不应未经确认就自动锁定或暂停。 ");
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        ProtectionManager.EnableAndLock(config);
+        bool lockedModeChangeRejected = false;
+        try
+        {
+            ProtectionManager.ChangeMode(config, ProtectionMode.Preview);
+        }
+        catch (InvalidOperationException)
+        {
+            lockedModeChangeRejected = true;
+        }
+
+        Assert(lockedModeChangeRejected, "严格模式锁定后仍能切换到预览模式。 ");
+        Assert(
+            config.ProtectionMode == ProtectionMode.Strict && config.ProtectionLocked,
+            "被拒绝的模式切换仍修改了严格锁定状态。 ");
+
+        ProtectionManager.RequestUnlock(config, ProtectionManager.UnlockConfirmationText, now);
+        ProtectionManager.CompleteUnlock(config, now.AddMinutes(60));
+        ProtectionManager.ChangeMode(config, ProtectionMode.Preview);
+        Assert(
+            config.ProtectionMode == ProtectionMode.Preview && !config.ProtectionLocked,
+            "冷静期结束并完成解除后仍无法切换到预览模式。 ");
+    }
+
+    private static void LegacyConfigDefaultsToStrict()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "BlockGameSelfTest", Guid.NewGuid().ToString("N"));
+        var paths = new DataPaths(root);
+        try
+        {
+            paths.EnsureDirectory();
+            File.WriteAllText(
+                paths.ConfigFile,
+                """
+                {
+                  "SchemaVersion": 1,
+                  "ProtectionEnabled": false,
+                  "ProtectionLocked": false,
+                  "Rules": []
+                }
+                """);
+            AppConfig legacy = new ConfigStore(paths).Load();
+            Assert(
+                legacy.ProtectionMode == ProtectionMode.Strict,
+                "缺少模式字段的旧配置没有迁移为严格模式。 ");
+
+            File.WriteAllText(
+                paths.ConfigFile,
+                """
+                {
+                  "SchemaVersion": 1,
+                  "ProtectionMode": "Preview",
+                  "ProtectionEnabled": true,
+                  "ProtectionLocked": true,
+                  "Rules": []
+                }
+                """);
+            AppConfig inconsistent = new ConfigStore(paths).Load();
+            Assert(
+                inconsistent.ProtectionMode == ProtectionMode.Strict,
+                "锁定配置没有被规范为严格模式。 ");
+        }
+        finally
+        {
+            string fullRoot = Path.GetFullPath(root);
+            string expectedParent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "BlockGameSelfTest"));
+            if (fullRoot.StartsWith(expectedParent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                && Directory.Exists(fullRoot))
+            {
+                Directory.Delete(fullRoot, recursive: true);
+            }
+        }
+    }
+
+    private static void RestoreDefaults()
+    {
+        PasswordCredential password = PasswordHasher.Create("keep-password", 100_000);
+        var config = new AppConfig
+        {
+            SetupCompleted = true,
+            Password = password,
+            ProtectionMode = ProtectionMode.Preview,
             ProtectionEnabled = true,
-            ProtectionLocked = true,
+            ProtectionLocked = false,
+            UnlockDelayMinutes = 60,
             UnlockRequestedAtUtc = DateTimeOffset.UtcNow,
             UnlockAvailableAtUtc = DateTimeOffset.UtcNow.AddDays(1),
             UninstallTokenHashBase64 = "token",
@@ -687,19 +886,46 @@ internal static class Program
             Rules = [new BlockRule { Name = "QQ", Pattern = "qq" }]
         };
 
-        ProtectionManager.ResetForDebug(config);
+        ProtectionManager.RestoreDefaults(config);
 
-        Assert(!config.ProtectionEnabled, "调试复位后仍在拦截。 ");
-        Assert(!config.ProtectionLocked, "调试复位后仍处于锁定。 ");
-        Assert(config.UnlockRequestedAtUtc is null && config.UnlockAvailableAtUtc is null, "调试复位未清除解除申请。 ");
-        Assert(config.UninstallTokenHashBase64 is null && config.UninstallAuthorizedUntilUtc is null, "调试复位未清除卸载授权。 ");
-        Assert(config.PasswordThrottle.ConsecutiveFailures == 0, "调试复位未清除密码限流。 ");
-        Assert(config.Rules.Count == 4, "调试复位未恢复四条默认规则。 ");
-        Assert(config.Rules.All(rule => !rule.Enabled), "调试复位后的默认规则仍处于勾选状态。 ");
-        Assert(config.Rules.All(rule => rule.Name.StartsWith("默认：", StringComparison.Ordinal)), "调试复位未删除自定义规则。 ");
+        Assert(!config.ProtectionEnabled, "恢复默认设置后仍在拦截。 ");
+        Assert(!config.ProtectionLocked, "恢复默认设置后仍处于锁定。 ");
+        Assert(config.ProtectionMode == ProtectionMode.Strict, "恢复默认设置未切回严格模式。 ");
+        Assert(config.UnlockDelayMinutes == 24 * 60, "恢复默认设置未还原 24 小时冷静期。 ");
+        Assert(config.UnlockRequestedAtUtc is null && config.UnlockAvailableAtUtc is null, "恢复默认设置未清除解除申请。 ");
+        Assert(config.UninstallTokenHashBase64 is null && config.UninstallAuthorizedUntilUtc is null, "恢复默认设置未清除卸载授权。 ");
+        Assert(config.PasswordThrottle.ConsecutiveFailures == 0, "恢复默认设置未清除密码限流。 ");
+        Assert(config.Rules.Count == 4, "恢复默认设置未恢复四条默认规则。 ");
+        Assert(config.Rules.All(rule => !rule.Enabled), "恢复默认设置后的默认规则仍处于勾选状态。 ");
+        Assert(config.Rules.All(rule => rule.Name.StartsWith("默认：", StringComparison.Ordinal)), "恢复默认设置未删除自定义规则。 ");
+        Assert(config.SetupCompleted, "恢复默认设置错误地清除了首次配置状态。 ");
+        Assert(ReferenceEquals(config.Password, password), "恢复默认设置错误地替换了管理密码。 ");
         Assert(
             config.DefaultRulePresetVersion == DefaultRulePresets.CurrentVersion,
-            "调试复位后的默认规则版本不正确。 ");
+            "恢复默认设置后的默认规则版本不正确。 ");
+
+        var lockedConfig = new AppConfig
+        {
+            ProtectionEnabled = true,
+            ProtectionLocked = true,
+            Rules = [new BlockRule { Name = "Locked", Pattern = "locked.exe" }]
+        };
+        bool lockedRejected = false;
+        try
+        {
+            ProtectionManager.RestoreDefaults(lockedConfig);
+        }
+        catch (InvalidOperationException)
+        {
+            lockedRejected = true;
+        }
+
+        Assert(lockedRejected, "锁定期间仍可恢复默认设置。 ");
+        Assert(
+            lockedConfig.ProtectionEnabled
+                && lockedConfig.ProtectionLocked
+                && lockedConfig.Rules.Count == 1,
+            "拒绝锁定状态的恢复操作时仍修改了配置。 ");
     }
 
     private static void UninstallToken()
@@ -886,6 +1112,62 @@ internal static class Program
         }
     }
 
+    private static void DiagnosticLogExport()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "BlockGameSelfTest", Guid.NewGuid().ToString("N"));
+        var paths = new DataPaths(root);
+        try
+        {
+            var audit = new AuditLog(paths);
+            audit.Append(new AuditEntry
+            {
+                EventType = "DiagnosticTest",
+                Message = "诊断导出测试记录。",
+                Success = true
+            });
+            new HeartbeatStore(paths).Write(new GuardHeartbeat
+            {
+                ProcessId = 1234,
+                Mode = "SelfTest"
+            });
+
+            string exportFile = Path.Combine(root, "diagnostics.zip");
+            IReadOnlyList<string> included = DiagnosticLogExporter.Export(
+                paths,
+                exportFile,
+                "SummaryValue=诊断测试");
+
+            Assert(File.Exists(exportFile), "诊断日志 ZIP 未生成。 ");
+            Assert(included.Contains("audit.jsonl"), "诊断日志未包含当前审计文件。 ");
+            Assert(included.Contains("guard-heartbeat.json"), "诊断日志未包含守护心跳。 ");
+            Assert(included.Contains("diagnostics.txt"), "诊断日志未包含摘要。 ");
+
+            using ZipArchive archive = ZipFile.OpenRead(exportFile);
+            ZipArchiveEntry? auditEntry = archive.GetEntry("audit.jsonl");
+            ZipArchiveEntry? summaryEntry = archive.GetEntry("diagnostics.txt");
+            Assert(auditEntry is not null, "ZIP 中找不到审计日志。 ");
+            Assert(summaryEntry is not null, "ZIP 中找不到诊断摘要。 ");
+            using var auditReader = new StreamReader(auditEntry!.Open());
+            using var summaryReader = new StreamReader(summaryEntry!.Open());
+            Assert(
+                auditReader.ReadToEnd().Contains("DiagnosticTest", StringComparison.Ordinal),
+                "导出的审计日志内容不正确。 ");
+            Assert(
+                summaryReader.ReadToEnd().Contains("SummaryValue=诊断测试", StringComparison.Ordinal),
+                "导出的诊断摘要内容不正确。 ");
+        }
+        finally
+        {
+            string fullRoot = Path.GetFullPath(root);
+            string expectedParent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "BlockGameSelfTest"));
+            if (fullRoot.StartsWith(expectedParent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                && Directory.Exists(fullRoot))
+            {
+                Directory.Delete(fullRoot, recursive: true);
+            }
+        }
+    }
+
     private static void AuditRotation()
     {
         string root = Path.Combine(Path.GetTempPath(), "BlockGameSelfTest", Guid.NewGuid().ToString("N"));
@@ -945,6 +1227,72 @@ internal static class Program
                 && Directory.Exists(fullRoot))
             {
                 Directory.Delete(fullRoot, recursive: true);
+            }
+        }
+    }
+
+    private static void CreateWindowsShortcut(
+        string shortcutPath,
+        string targetPath,
+        string arguments,
+        string workingDirectory)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException();
+        }
+
+        Type shellType = Type.GetTypeFromProgID("WScript.Shell")
+            ?? throw new InvalidOperationException("测试环境无法创建 WScript.Shell。 ");
+        object? shell = null;
+        object? shortcut = null;
+        try
+        {
+            shell = Activator.CreateInstance(shellType)
+                ?? throw new InvalidOperationException("测试环境无法启动 WScript.Shell。 ");
+            shortcut = shellType.InvokeMember(
+                "CreateShortcut",
+                BindingFlags.InvokeMethod,
+                binder: null,
+                target: shell,
+                args: [shortcutPath])
+                ?? throw new InvalidOperationException("测试快捷方式创建失败。 ");
+            Type shortcutType = shortcut.GetType();
+            shortcutType.InvokeMember(
+                "TargetPath",
+                BindingFlags.SetProperty,
+                binder: null,
+                target: shortcut,
+                args: [targetPath]);
+            shortcutType.InvokeMember(
+                "Arguments",
+                BindingFlags.SetProperty,
+                binder: null,
+                target: shortcut,
+                args: [arguments]);
+            shortcutType.InvokeMember(
+                "WorkingDirectory",
+                BindingFlags.SetProperty,
+                binder: null,
+                target: shortcut,
+                args: [workingDirectory]);
+            shortcutType.InvokeMember(
+                "Save",
+                BindingFlags.InvokeMethod,
+                binder: null,
+                target: shortcut,
+                args: null);
+        }
+        finally
+        {
+            if (shortcut is not null && Marshal.IsComObject(shortcut))
+            {
+                Marshal.FinalReleaseComObject(shortcut);
+            }
+
+            if (shell is not null && Marshal.IsComObject(shell))
+            {
+                Marshal.FinalReleaseComObject(shell);
             }
         }
     }

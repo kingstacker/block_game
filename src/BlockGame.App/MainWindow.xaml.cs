@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -35,6 +37,7 @@ public partial class MainWindow : Window
     private DateTimeOffset _nextGuardHealthCheckUtc = DateTimeOffset.MinValue;
     private bool _guardHealthCheckRunning;
     private string? _lastGuardWatchdogAuditMessage;
+    private bool _updatingProtectionModeSelection;
     private AppConfig _config;
 
     public MainWindow(
@@ -50,6 +53,7 @@ public partial class MainWindow : Window
         _config = _configStore.Load();
 
         InitializeComponent();
+        SourceInitialized += (_, _) => ElevatedFileDropSupport.TryAllowExplorerFileDrops(this);
         RulesDataGrid.ItemsSource = _rules;
         AuditDataGrid.ItemsSource = _auditRows;
         DataDirectoryText.Text = "数据目录：" + _paths.RootDirectory;
@@ -92,9 +96,21 @@ public partial class MainWindow : Window
             ? $"守护程序运行中 · PID {heartbeat!.ProcessId}"
             : "未检测到守护程序";
 
-        ProtectionStatusText.Text = _config.ProtectionEnabled ? "正在拦截" : "已暂停";
-        LockStatusText.Text = _config.ProtectionLocked ? "已锁定" : "可管理";
+        bool previewMode = _config.ProtectionMode == ProtectionMode.Preview;
+        ProtectionStatusText.Text = _config.ProtectionEnabled
+            ? previewMode ? "预览拦截中" : "严格拦截中"
+            : "已暂停";
+        ModeStatusText.Text = previewMode ? "预览屏蔽" : "严格模式";
+        LockStatusText.Text = _config.ProtectionLocked
+            ? "已锁定"
+            : previewMode ? "不锁定" : "可管理";
         RuleCountText.Text = _config.Rules.Count(rule => rule.Enabled).ToString(CultureInfo.InvariantCulture);
+
+        RefreshProtectionModeSelection();
+        ProtectionModeComboBox.IsEnabled = !_config.ProtectionLocked;
+        ModeDescriptionText.Text = previewMode
+            ? "真实执行全部启用规则，可立即启用、暂停和调整规则，不进入冷静期锁定。"
+            : "启用后立即锁定；暂停拦截、削弱规则或切换到预览模式都必须先完成冷静期解除。";
 
         DateTimeOffset nowUtc = DateTimeOffset.UtcNow;
         if (_config.UnlockAvailableAtUtc is { } availableAt)
@@ -106,23 +122,74 @@ public partial class MainWindow : Window
         }
         else if (_config.ProtectionLocked)
         {
-            UnlockStatusText.Text = $"设置已锁定。解除需要密码、确认文本和 {FormatDuration(TimeSpan.FromMinutes(_config.UnlockDelayMinutes))} 冷静期。";
+            UnlockStatusText.Text = $"严格模式已锁定。解除需要密码、确认文本和 {FormatDuration(TimeSpan.FromMinutes(_config.UnlockDelayMinutes))} 冷静期；解除前不能切换到预览模式。";
+        }
+        else if (previewMode)
+        {
+            UnlockStatusText.Text = _config.ProtectionEnabled
+                ? "预览屏蔽正在实际执行规则；可立即暂停、修改规则或切换回严格模式。"
+                : "预览屏蔽尚未启用；启用后会真实拦截命中内容，也可以随时暂停。";
+        }
+        else if (_config.ProtectionEnabled)
+        {
+            UnlockStatusText.Text = "严格模式仍在拦截，但当前尚未锁定。可重新锁定、暂停拦截，或切换到预览屏蔽模式。";
         }
         else
         {
-            UnlockStatusText.Text = "当前设置可管理。启用并锁定后，削弱保护的操作必须经过解除流程。";
+            UnlockStatusText.Text = "当前为默认严格模式。启用并锁定后，削弱保护或切换模式必须经过解除流程。";
         }
 
+        EnableLockButton.Visibility = previewMode || _config.ProtectionLocked
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         EnableLockButton.IsEnabled = !_config.ProtectionLocked;
-        RequestUnlockButton.IsEnabled = _config.ProtectionLocked && _config.UnlockAvailableAtUtc is null;
-        CompleteUnlockButton.IsEnabled = _config.ProtectionLocked
-            && _config.UnlockAvailableAtUtc is { } unlockAt
+        EnablePreviewButton.Visibility = previewMode && !_config.ProtectionEnabled
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        EnablePreviewButton.IsEnabled = !_config.ProtectionLocked;
+        RequestUnlockButton.Visibility = _config.ProtectionLocked
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        RequestUnlockButton.IsEnabled = _config.UnlockAvailableAtUtc is null;
+        CompleteUnlockButton.Visibility = _config.ProtectionLocked
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        CompleteUnlockButton.IsEnabled = _config.UnlockAvailableAtUtc is { } unlockAt
             && unlockAt <= nowUtc;
+        DisableProtectionButton.Visibility = !_config.ProtectionLocked && _config.ProtectionEnabled
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        DisableProtectionButton.Content = previewMode ? "暂停预览屏蔽" : "暂停严格拦截";
         DisableProtectionButton.IsEnabled = !_config.ProtectionLocked && _config.ProtectionEnabled;
 
         if (!UnlockDelayValueTextBox.IsKeyboardFocused)
         {
             RefreshUnlockDelayInput();
+        }
+    }
+
+    private void RefreshProtectionModeSelection()
+    {
+        ProtectionMode selectedMode = ProtectionModeComboBox.SelectedItem is ComboBoxItem selected
+            && Enum.TryParse(selected.Tag?.ToString(), out ProtectionMode parsed)
+                ? parsed
+                : (ProtectionMode)(-1);
+        if (selectedMode == _config.ProtectionMode)
+        {
+            return;
+        }
+
+        _updatingProtectionModeSelection = true;
+        try
+        {
+            ProtectionModeComboBox.SelectedItem = ProtectionModeComboBox.Items
+                .OfType<ComboBoxItem>()
+                .First(item => Enum.TryParse(item.Tag?.ToString(), out ProtectionMode mode)
+                    && mode == _config.ProtectionMode);
+        }
+        finally
+        {
+            _updatingProtectionModeSelection = false;
         }
     }
 
@@ -312,6 +379,43 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private void ProtectionModeComboBox_SelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (_updatingProtectionModeSelection
+            || ProtectionModeComboBox.SelectedItem is not ComboBoxItem selected
+            || !Enum.TryParse(selected.Tag?.ToString(), out ProtectionMode mode))
+        {
+            return;
+        }
+
+        ReloadConfig();
+        if (_config.ProtectionMode == mode)
+        {
+            return;
+        }
+
+        try
+        {
+            ProtectionManager.ChangeMode(_config, mode);
+            _configStore.Save(_config);
+            string message = mode == ProtectionMode.Preview
+                ? "已切换到预览屏蔽模式；规则会真实拦截，但可立即启停和修改。"
+                : _config.ProtectionEnabled
+                    ? "已切换到严格模式；当前拦截保持启用，点击“启用并锁定严格保护”后才会进入冷静期锁定。"
+                    : "已切换到严格模式；启用后将立即进入冷静期锁定。";
+            AppendAudit("ProtectionModeChanged", message, true);
+            RefreshStatus(reloadConfig: false);
+        }
+        catch (InvalidOperationException exception)
+        {
+            RefreshStatus(reloadConfig: false);
+            AppendAudit("ProtectionModeChangeRejected", exception.Message, false);
+            MessageBox.Show(exception.Message, "切换屏蔽模式", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private void EnableLockButton_Click(object sender, RoutedEventArgs e)
     {
         ReloadConfig();
@@ -323,8 +427,31 @@ public partial class MainWindow : Window
 
         ProtectionManager.EnableAndLock(_config);
         _configStore.Save(_config);
-        AppendAudit("ProtectionLocked", "保护已启用并锁定。", true);
+        AppendAudit("StrictProtectionLocked", "严格模式已启用并锁定。", true);
         RefreshRules();
+    }
+
+    private void EnablePreviewButton_Click(object sender, RoutedEventArgs e)
+    {
+        ReloadConfig();
+        if (_config.Rules.All(rule => !rule.Enabled))
+        {
+            MessageBox.Show("请先添加至少一条启用的拦截规则。", "BlockGame", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            ProtectionManager.EnablePreview(_config);
+            _configStore.Save(_config);
+            AppendAudit("PreviewProtectionEnabled", "预览屏蔽已启用，规则正在实际执行；可随时暂停。", true);
+            RefreshStatus(reloadConfig: false);
+        }
+        catch (InvalidOperationException exception)
+        {
+            RefreshStatus(reloadConfig: false);
+            MessageBox.Show(exception.Message, "启用预览屏蔽", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private void RequestUnlockButton_Click(object sender, RoutedEventArgs e)
@@ -384,9 +511,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        bool previewMode = _config.ProtectionMode == ProtectionMode.Preview;
         ProtectionManager.DisableProtection(_config);
         _configStore.Save(_config);
-        AppendAudit("ProtectionDisabled", "拦截已暂停。", true);
+        AppendAudit(
+            previewMode ? "PreviewProtectionDisabled" : "StrictProtectionDisabled",
+            previewMode ? "预览屏蔽已立即暂停。" : "严格模式拦截已暂停。",
+            true);
         RefreshStatus(reloadConfig: false);
     }
 
@@ -405,6 +536,194 @@ public partial class MainWindow : Window
             RuleTargetComboBox.SelectedIndex = 1;
             RulePatternTextBox.Text = dialog.FileName;
         }
+    }
+
+    private void ShortcutDropZone_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = GetDroppedFiles(e.Data).Any(IsShortcutFile)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void ShortcutDropZone_Drop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        string[] droppedFiles = GetDroppedFiles(e.Data);
+        string[] shortcutPaths = droppedFiles
+            .Where(IsShortcutFile)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (shortcutPaths.Length == 0)
+        {
+            MessageBox.Show(
+                this,
+                "请拖入 Windows .lnk 快捷方式。",
+                "从快捷方式生成规则",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        ReloadConfig();
+        var candidates = new List<ShortcutRuleCandidate>();
+        var issues = new List<string>();
+        var candidateKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (droppedFiles.Length > shortcutPaths.Length)
+        {
+            issues.Add($"已忽略 {droppedFiles.Length - shortcutPaths.Length} 个非 .lnk 文件。 ");
+        }
+
+        foreach (string shortcutPath in shortcutPaths)
+        {
+            string shortcutName = Path.GetFileName(shortcutPath);
+            try
+            {
+                ShortcutTargetInfo shortcut = ShortcutTargetResolver.Resolve(shortcutPath);
+                BlockRule rule = ShortcutRuleFactory.CreateRule(shortcut);
+                string key = $"{rule.Target}|{rule.Pattern}";
+                bool duplicate = _config.Rules.Any(existing =>
+                    existing.Target == rule.Target
+                    && string.Equals(
+                        existing.Pattern,
+                        rule.Pattern,
+                        StringComparison.OrdinalIgnoreCase));
+                if (duplicate || !candidateKeys.Add(key))
+                {
+                    issues.Add($"{shortcutName}：相同规则已经存在。 ");
+                    continue;
+                }
+
+                candidates.Add(new ShortcutRuleCandidate(shortcut, rule));
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or InvalidDataException
+                    or ArgumentException
+                    or InvalidOperationException
+                    or PlatformNotSupportedException)
+            {
+                issues.Add($"{shortcutName}：{exception.Message.Trim()}");
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            MessageBox.Show(
+                this,
+                "没有可生成的规则。" + FormatShortcutIssues(issues),
+                "从快捷方式生成规则",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var confirmation = new StringBuilder("将生成以下启用的完整路径规则：\n\n");
+        foreach (ShortcutRuleCandidate candidate in candidates.Take(8))
+        {
+            confirmation.AppendLine($"• {candidate.Rule.Name}");
+            confirmation.AppendLine($"  {candidate.Rule.Pattern}");
+        }
+
+        if (candidates.Count > 8)
+        {
+            confirmation.AppendLine($"……共 {candidates.Count} 条规则");
+        }
+
+        int argumentCount = candidates.Count(candidate =>
+            !string.IsNullOrWhiteSpace(candidate.Shortcut.Arguments));
+        if (argumentCount > 0)
+        {
+            confirmation.AppendLine();
+            confirmation.AppendLine(
+                $"注意：其中 {argumentCount} 个快捷方式包含启动参数。生成的规则会拦截整个目标 EXE，而不只拦截带这些参数的启动方式。");
+        }
+
+        confirmation.AppendLine();
+        confirmation.Append("是否继续？");
+        if (MessageBox.Show(
+                this,
+                confirmation.ToString(),
+                "从快捷方式生成规则",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question,
+                MessageBoxResult.No) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        // 确认框会继续泵送界面消息，保存前重新加载，避免覆盖同期的配置变化。
+        ReloadConfig();
+        var addedRules = new List<BlockRule>();
+        foreach (ShortcutRuleCandidate candidate in candidates)
+        {
+            bool duplicate = _config.Rules.Any(existing =>
+                existing.Target == candidate.Rule.Target
+                && string.Equals(
+                    existing.Pattern,
+                    candidate.Rule.Pattern,
+                    StringComparison.OrdinalIgnoreCase));
+            if (duplicate)
+            {
+                issues.Add($"{Path.GetFileName(candidate.Shortcut.ShortcutPath)}：确认期间已存在相同规则。 ");
+                continue;
+            }
+
+            _config.Rules.Add(candidate.Rule);
+            addedRules.Add(candidate.Rule);
+        }
+
+        if (addedRules.Count == 0)
+        {
+            MessageBox.Show(
+                this,
+                "没有新增规则。" + FormatShortcutIssues(issues),
+                "从快捷方式生成规则",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        _configStore.Save(_config);
+        AppendAudit(
+            "ShortcutRulesAdded",
+            $"已从快捷方式生成 {addedRules.Count} 条完整路径规则："
+                + string.Join("、", addedRules.Take(10).Select(rule => rule.Name))
+                + (addedRules.Count > 10 ? "等" : string.Empty)
+                + "。",
+            true);
+        RefreshRules();
+        MessageBox.Show(
+            this,
+            $"已生成并启用 {addedRules.Count} 条完整路径规则。"
+                + FormatShortcutIssues(issues),
+            "从快捷方式生成规则",
+            MessageBoxButton.OK,
+            issues.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
+    private static string[] GetDroppedFiles(System.Windows.IDataObject data)
+        => data.GetDataPresent(DataFormats.FileDrop)
+            && data.GetData(DataFormats.FileDrop) is string[] files
+                ? files
+                : [];
+
+    private static bool IsShortcutFile(string path)
+        => string.Equals(Path.GetExtension(path), ".lnk", StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatShortcutIssues(IReadOnlyList<string> issues)
+    {
+        if (issues.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        string text = "\n\n未生成或已忽略：\n"
+            + string.Join("\n", issues.Take(8).Select(issue => "• " + issue));
+        return issues.Count > 8
+            ? text + $"\n• ……等共 {issues.Count} 项"
+            : text;
     }
 
     private void RuleTargetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -591,14 +910,36 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DebugResetButton_Click(object sender, RoutedEventArgs e) => RunDebugReset();
-
-    public void RunDebugReset()
+    private void RestoreDefaultsButton_Click(object sender, RoutedEventArgs e)
     {
+        ReloadConfig();
+        if (_config.ProtectionLocked)
+        {
+            MessageBox.Show(
+                "设置已锁定，必须先完成解除流程，才能恢复默认设置。",
+                "恢复默认设置",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        MessageBoxResult confirmation = MessageBox.Show(
+            this,
+            "恢复默认设置将切回严格模式、暂停拦截、把冷静期重置为 24 小时、删除全部自定义规则，并恢复未启用的默认规则。\n\n管理密码会保留。是否继续？",
+            "恢复默认设置",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirmation != MessageBoxResult.Yes
+            || !AuthenticateForAction("恢复默认设置"))
+        {
+            return;
+        }
+
         try
         {
             ReloadConfig();
-            ProtectionManager.ResetForDebug(_config);
+            ProtectionManager.RestoreDefaults(_config);
             _configStore.Save(_config);
             if (File.Exists(_paths.UninstallTokenFile))
             {
@@ -608,23 +949,24 @@ public partial class MainWindow : Window
             bool networkReset = GuardServiceInstaller.TryCleanupNetworkPolicies(
                 out string networkResetMessage);
             AppendAudit(
-                "DebugReset",
-                "已执行最高优先级调试复位：暂停拦截、解除锁定、删除自定义规则并恢复未启用的默认规则。"
+                "DefaultsRestored",
+                "已恢复默认设置：保留管理密码，切回严格模式并暂停拦截，冷静期恢复为 24 小时，删除自定义规则并恢复未启用的默认规则。"
                     + networkResetMessage,
-                networkReset);
+                true);
             RefreshRules();
             MessageBox.Show(
-                "调试复位完成：拦截已暂停，设置已解锁，自定义规则已删除；默认规则已恢复并保持未勾选。\n\n"
+                "默认设置已恢复：管理密码已保留，已切回严格模式并暂停拦截，冷静期已恢复为 24 小时，自定义规则已删除，默认规则保持未启用。\n\n"
                     + networkResetMessage,
-                "BlockGame",
+                "恢复默认设置",
                 MessageBoxButton.OK,
-                MessageBoxImage.Information);
+                networkReset ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             MessageBox.Show(
-                "调试复位失败，无法写入配置：\n\n" + exception.Message,
-                "BlockGame",
+                "恢复默认设置失败：\n\n" + exception.Message,
+                "恢复默认设置",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
@@ -933,6 +1275,87 @@ public partial class MainWindow : Window
     private void RefreshLogsButton_Click(object sender, RoutedEventArgs e)
         => RefreshLogs(notifyNewBlocks: true, forceReload: true);
 
+    private void ExportLogsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出 BlockGame 诊断日志",
+            Filter = "ZIP 压缩包 (*.zip)|*.zip",
+            DefaultExt = ".zip",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = $"BlockGame-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.zip"
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            IReadOnlyList<string> includedFiles = DiagnosticLogExporter.Export(
+                _paths,
+                dialog.FileName,
+                BuildDiagnosticSummary());
+            AppendAudit(
+                "LogsExported",
+                $"已导出诊断日志：{Path.GetFileName(dialog.FileName)}，包含 {includedFiles.Count} 个文件。",
+                true);
+            MessageBox.Show(
+                this,
+                "诊断日志已导出：\n\n"
+                    + dialog.FileName
+                    + "\n\n包含："
+                    + string.Join("、", includedFiles),
+                "导出日志",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or ArgumentException)
+        {
+            MessageBox.Show(
+                this,
+                "导出日志失败：\n\n" + exception.Message,
+                "导出日志",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private string BuildDiagnosticSummary()
+    {
+        ReloadConfig();
+        GuardHeartbeat? heartbeat = _heartbeatStore.Read();
+        string[] launchArguments = Environment.GetCommandLineArgs().Skip(1).ToArray();
+        return string.Join(
+            Environment.NewLine,
+            "BlockGame diagnostic summary",
+            $"ExportedAtUtc: {DateTimeOffset.UtcNow:O}",
+            $"ApplicationVersion: {typeof(MainWindow).Assembly.GetName().Version}",
+            $"Framework: {RuntimeInformation.FrameworkDescription}",
+            $"OperatingSystem: {RuntimeInformation.OSDescription}",
+            $"ProcessArchitecture: {RuntimeInformation.ProcessArchitecture}",
+            $"ProcessId: {Environment.ProcessId}",
+            $"ApplicationDirectory: {AppContext.BaseDirectory}",
+            $"DataDirectory: {_paths.RootDirectory}",
+            $"LaunchArguments: {string.Join(' ', launchArguments)}",
+            $"AutoStartMode: {StartupArguments.IsAutoStart(launchArguments)}",
+            $"ProtectionMode: {_config.ProtectionMode}",
+            $"ProtectionEnabled: {_config.ProtectionEnabled}",
+            $"ProtectionLocked: {_config.ProtectionLocked}",
+            $"UnlockDelayMinutes: {_config.UnlockDelayMinutes}",
+            $"RuleCount: {_config.Rules.Count}",
+            $"EnabledRuleCount: {_config.Rules.Count(rule => rule.Enabled)}",
+            $"GuardHeartbeatUtc: {heartbeat?.TimestampUtc:O}",
+            $"GuardProcessId: {heartbeat?.ProcessId}",
+            $"GuardMode: {heartbeat?.Mode}",
+            string.Empty);
+    }
+
     private void ReloadConfig() => _config = _configStore.Load();
 
     /// <summary>
@@ -1114,6 +1537,10 @@ public partial class MainWindow : Window
         return $"{Math.Max(1, (int)Math.Ceiling(duration.TotalMinutes))} 分钟";
     }
 
+    private sealed record ShortcutRuleCandidate(
+        ShortcutTargetInfo Shortcut,
+        BlockRule Rule);
+
     private sealed class RuleRow
     {
         public RuleRow(BlockRule rule)
@@ -1152,6 +1579,13 @@ public partial class MainWindow : Window
                 "WebsiteBlocked" => "网站拦截",
                 "WebsiteRulesApplied" => "网站规则同步",
                 "DefaultRulesAdded" => "默认规则",
+                "ProtectionModeChanged" => "模式切换",
+                "ProtectionModeChangeRejected" => "模式切换被拒绝",
+                "StrictProtectionLocked" => "严格模式锁定",
+                "StrictProtectionDisabled" => "严格模式暂停",
+                "PreviewProtectionEnabled" => "预览屏蔽启用",
+                "PreviewProtectionDisabled" => "预览屏蔽暂停",
+                "ShortcutRulesAdded" => "快捷方式规则",
                 _ => entry.EventType
             };
             ResultDisplay = entry.Success ? "成功" : "失败";

@@ -39,6 +39,11 @@ public sealed class ConfigStore
         config.Rules ??= [];
         config.Password ??= new PasswordCredential();
         config.PasswordThrottle ??= new PasswordThrottle();
+        if (!Enum.IsDefined(config.ProtectionMode) || config.ProtectionLocked)
+        {
+            // 旧配置没有模式字段时枚举默认值即为 Strict；锁定状态也必须始终归属严格模式。
+            config.ProtectionMode = ProtectionMode.Strict;
+        }
         return config;
     }
 
@@ -89,4 +94,3 @@ public sealed class ConfigStore
         throw lastError ?? new IOException("读取配置文件失败。 ");
     }
 }
-

@@ -20,24 +20,12 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="BlockGame" FontSize="25" FontWeight="SemiBold" Foreground="White" />
-                    <TextBlock Text="把临时冲动变成需要等待的决定" Margin="0,4,0,0" Foreground="#DBE2FF" />
+                    <TextBlock Text="把临时冲动变成需要等待的决定" Margin="0,4,0,0" Foreground="#DBEAFE" />
                 </StackPanel>
-                <Button Grid.Column="1"
-                        Style="{StaticResource PrimaryButton}"
-                        Margin="0,0,12,0"
-                        Padding="16,8"
-                        Background="#DC2626"
-                        BorderBrush="#F87171"
-                        Foreground="White"
-                        FontWeight="SemiBold"
-                        Content="调试一键复位"
-                        ToolTip="最高优先级：立即暂停拦截、解除锁定并删除全部规则，不校验密码"
-                        Click="DebugResetButton_Click" />
-                <Border Grid.Column="2" Background="#33FFFFFF" CornerRadius="8" Padding="14,7" VerticalAlignment="Center">
+                <Border Grid.Column="1" Background="#33FFFFFF" CornerRadius="8" Padding="14,7" VerticalAlignment="Center">
                     <TextBlock x:Name="HeaderGuardStatusText" Text="正在检查守护程序…" Foreground="White" />
                 </Border>
             </Grid>
@@ -47,11 +35,17 @@
             <TabItem Header="概览">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="4,18,4,0">
-                        <UniformGrid Columns="3">
+                        <UniformGrid Columns="4">
                             <Border Style="{StaticResource PanelCard}" Margin="0,0,14,14">
                                 <StackPanel>
                                     <TextBlock Text="拦截状态" Foreground="{StaticResource MutedTextBrush}" />
                                     <TextBlock x:Name="ProtectionStatusText" Text="—" Margin="0,8,0,0" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource PanelCard}" Margin="0,0,14,14">
+                                <StackPanel>
+                                    <TextBlock Text="当前模式" Foreground="{StaticResource MutedTextBrush}" />
+                                    <TextBlock x:Name="ModeStatusText" Text="—" Margin="0,8,0,0" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource PanelCard}" Margin="0,0,14,14">
@@ -70,10 +64,33 @@
 
                         <Border Style="{StaticResource PanelCard}" Margin="0,0,0,14">
                             <StackPanel>
-                                <TextBlock Text="解除状态" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
-                                <TextBlock x:Name="UnlockStatusText" Margin="0,9,0,16" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="屏蔽模式与解除" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                <Grid Margin="0,11,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="220" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Margin="0,8,12,0"
+                                               Text="屏蔽模式"
+                                               Foreground="{StaticResource TextBrush}" />
+                                    <ComboBox Grid.Column="1"
+                                              x:Name="ProtectionModeComboBox"
+                                              SelectionChanged="ProtectionModeComboBox_SelectionChanged">
+                                        <ComboBoxItem Content="严格模式（默认）" Tag="Strict" />
+                                        <ComboBoxItem Content="预览屏蔽模式" Tag="Preview" />
+                                    </ComboBox>
+                                    <TextBlock Grid.Column="2"
+                                               x:Name="ModeDescriptionText"
+                                               Margin="16,5,0,0"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource MutedTextBrush}" />
+                                </Grid>
+                                <TextBlock x:Name="UnlockStatusText" Margin="0,12,0,16" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" />
                                 <WrapPanel>
-                                    <Button x:Name="EnableLockButton" Style="{StaticResource PrimaryButton}" Content="启用并锁定保护" Click="EnableLockButton_Click" />
+                                    <Button x:Name="EnableLockButton" Style="{StaticResource PrimaryButton}" Content="启用并锁定严格保护" Click="EnableLockButton_Click" />
+                                    <Button x:Name="EnablePreviewButton" Style="{StaticResource PrimaryButton}" Content="启用预览屏蔽" Click="EnablePreviewButton_Click" Visibility="Collapsed" />
                                     <Button x:Name="RequestUnlockButton" Style="{StaticResource SecondaryButton}" Content="申请解除" Click="RequestUnlockButton_Click" />
                                     <Button x:Name="CompleteUnlockButton" Style="{StaticResource SecondaryButton}" Content="完成解除" Click="CompleteUnlockButton_Click" />
                                     <Button x:Name="DisableProtectionButton" Style="{StaticResource DangerButton}" Content="暂停拦截" Click="DisableProtectionButton_Click" />
@@ -125,7 +142,8 @@
                     </Grid.RowDefinitions>
 
                     <Border Grid.Row="0" Style="{StaticResource PanelCard}" Margin="0,0,0,14">
-                        <Grid>
+                        <StackPanel>
+                            <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="1.1*" />
                                 <ColumnDefinition Width="150" />
@@ -159,9 +177,25 @@
                                          VerticalContentAlignment="Top"
                                          VerticalScrollBarVisibility="Auto" />
                             </StackPanel>
-                            <Button x:Name="BrowseExeButton" Grid.Column="3" Style="{StaticResource SecondaryButton}" Content="选择 EXE" VerticalAlignment="Bottom" Click="BrowseExeButton_Click" />
-                            <Button Grid.Column="4" Style="{StaticResource PrimaryButton}" Content="添加规则" VerticalAlignment="Bottom" Margin="0" Click="AddRuleButton_Click" />
-                        </Grid>
+                                <Button x:Name="BrowseExeButton" Grid.Column="3" Style="{StaticResource SecondaryButton}" Content="选择 EXE" VerticalAlignment="Bottom" Click="BrowseExeButton_Click" />
+                                <Button Grid.Column="4" Style="{StaticResource PrimaryButton}" Content="添加规则" VerticalAlignment="Bottom" Margin="0" Click="AddRuleButton_Click" />
+                            </Grid>
+
+                            <Border x:Name="ShortcutDropZone"
+                                    Margin="0,14,0,0"
+                                    Padding="14,10"
+                                    CornerRadius="7"
+                                    Background="#EFF6FF"
+                                    BorderBrush="#BFDBFE"
+                                    BorderThickness="1"
+                                    AllowDrop="True"
+                                    DragOver="ShortcutDropZone_DragOver"
+                                    Drop="ShortcutDropZone_Drop">
+                                <TextBlock Text="将桌面或开始菜单中的 .lnk 快捷方式拖到这里，可读取目标 EXE 并生成启用的完整路径规则。"
+                                           TextWrapping="Wrap"
+                                           Foreground="{StaticResource AccentTextBrush}" />
+                            </Border>
+                        </StackPanel>
                     </Border>
 
                     <DataGrid Grid.Row="1"
@@ -212,10 +246,16 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <DockPanel Grid.Row="0" Margin="0,0,0,12">
-                        <TextBlock Text="最近 300 条记录" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" />
-                        <Button DockPanel.Dock="Right" HorizontalAlignment="Right" Style="{StaticResource SecondaryButton}" Margin="0" Content="刷新" Click="RefreshLogsButton_Click" />
-                    </DockPanel>
+                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="最近 300 条记录" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="导出日志" Click="ExportLogsButton_Click" />
+                        <Button Grid.Column="2" Style="{StaticResource SecondaryButton}" Margin="0" Content="刷新" Click="RefreshLogsButton_Click" />
+                    </Grid>
                     <DataGrid Grid.Row="1" x:Name="AuditDataGrid">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="时间" Binding="{Binding TimeDisplay}" Width="165" />
@@ -270,9 +310,63 @@
 
                         <Border Style="{StaticResource PanelCard}" Margin="0,0,0,14">
                             <StackPanel>
+                                <TextBlock Text="恢复默认设置" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                <TextBlock Text="保留管理密码；恢复默认严格模式并暂停拦截，将冷静期重置为 24 小时，删除自定义规则，并恢复未启用的默认规则。设置锁定期间不能执行。"
+                                           Margin="0,4,0,12"
+                                           TextWrapping="Wrap"
+                                           Foreground="{StaticResource MutedTextBrush}" />
+                                <Button Width="150"
+                                        HorizontalAlignment="Left"
+                                        Style="{StaticResource DangerButton}"
+                                        Content="恢复默认设置"
+                                        Click="RestoreDefaultsButton_Click" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource PanelCard}" Margin="0,0,0,14">
+                            <StackPanel>
                                 <TextBlock Text="卸载软件" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
                                 <TextBlock Text="独立卸载程序会再次验证管理密码；保护处于锁定状态时，必须先完成解除流程。" Margin="0,4,0,12" Foreground="{StaticResource MutedTextBrush}" />
                                 <Button Width="150" HorizontalAlignment="Left" Style="{StaticResource DangerButton}" Content="卸载 BlockGame" Click="OpenUninstallerButton_Click" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource PanelCard}" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="关于 BlockGame"
+                                           FontSize="17"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextBrush}" />
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="80" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Row="0"
+                                               Grid.Column="0"
+                                               Margin="0,0,0,9"
+                                               Text="开发者"
+                                               Foreground="{StaticResource MutedTextBrush}" />
+                                    <TextBlock Grid.Row="0"
+                                               Grid.Column="1"
+                                               Margin="0,0,0,9"
+                                               Text="kingstacker"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextBrush}" />
+                                    <TextBlock Grid.Row="1"
+                                               Grid.Column="0"
+                                               Text="联系方式"
+                                               Foreground="{StaticResource MutedTextBrush}" />
+                                    <TextBlock Grid.Row="1"
+                                               Grid.Column="1"
+                                               Text="kingstacker_work@163.com"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource AccentTextBrush}" />
+                                </Grid>
                             </StackPanel>
                         </Border>
 
@@ -282,26 +376,10 @@
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="2" Background="#E7ECFB" Padding="22,9">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0"
-                           VerticalAlignment="Center"
-                           Text="BlockGame v0.1 · 本工具提供自我约束阻力，但本机管理员仍拥有最终系统恢复能力。"
-                           Foreground="#64748B" />
-                <StackPanel Grid.Column="1"
-                            Orientation="Horizontal"
-                            VerticalAlignment="Center">
-                    <Ellipse Width="7" Height="7" Fill="#4F46E5" VerticalAlignment="Center" Margin="0,0,7,0" />
-                    <TextBlock Text="开发者：kingstacker"
-                               FontWeight="SemiBold"
-                               Foreground="#4338CA"
-                               VerticalAlignment="Center" />
-                </StackPanel>
-            </Grid>
+        <Border Grid.Row="2" Background="{StaticResource FooterBackground}" Padding="22,9">
+            <TextBlock VerticalAlignment="Center"
+                       Text="BlockGame v0.1 · 本工具提供自我约束阻力，但本机管理员仍拥有最终系统恢复能力。"
+                       Foreground="{StaticResource MutedTextBrush}" />
         </Border>
     </Grid>
 </Window>

@@ -46,6 +46,7 @@ public partial class PasswordSetupWindow : Window
             config.PasswordThrottle = new PasswordThrottle();
             config.UnlockDelayMinutes = delayMinutes;
             config.SetupCompleted = true;
+            config.ProtectionMode = ProtectionMode.Strict;
             config.ProtectionEnabled = false;
             config.ProtectionLocked = false;
             _configStore.Save(config);

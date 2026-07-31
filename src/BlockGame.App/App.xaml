@@ -2,21 +2,25 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
-        <SolidColorBrush x:Key="AppBackground" Color="#EEF1F8" />
+        <SolidColorBrush x:Key="AppBackground" Color="#F1F5F9" />
         <SolidColorBrush x:Key="PanelBackground" Color="#FFFFFF" />
-        <SolidColorBrush x:Key="PrimaryBrush" Color="#4F46E5" />
-        <SolidColorBrush x:Key="PrimaryDarkBrush" Color="#4338CA" />
-        <SolidColorBrush x:Key="AccentTextBrush" Color="#4338CA" />
+        <SolidColorBrush x:Key="PrimaryBrush" Color="#2563EB" />
+        <SolidColorBrush x:Key="PrimaryDarkBrush" Color="#1D4ED8" />
+        <SolidColorBrush x:Key="AccentTextBrush" Color="#1D4ED8" />
         <SolidColorBrush x:Key="DangerBrush" Color="#DC2626" />
         <SolidColorBrush x:Key="TextBrush" Color="#1E293B" />
         <SolidColorBrush x:Key="MutedTextBrush" Color="#64748B" />
         <SolidColorBrush x:Key="BorderBrush" Color="#E2E8F0" />
-        <SolidColorBrush x:Key="SecondaryButtonBackground" Color="#EEF2FF" />
+        <SolidColorBrush x:Key="SecondaryButtonBackground" Color="#EFF6FF" />
+        <SolidColorBrush x:Key="AccentHoverBackground" Color="#EFF6FF" />
+        <SolidColorBrush x:Key="AccentSelectedBackground" Color="#DBEAFE" />
+        <SolidColorBrush x:Key="AccentBorderBrush" Color="#BFDBFE" />
+        <SolidColorBrush x:Key="FooterBackground" Color="#EAF2FC" />
         <SolidColorBrush x:Key="DangerButtonBackground" Color="#FEE2E2" />
 
         <LinearGradientBrush x:Key="HeaderGradient" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Offset="0" Color="#4338CA" />
-            <GradientStop Offset="1" Color="#6366F1" />
+            <GradientStop Offset="0" Color="#1D4ED8" />
+            <GradientStop Offset="1" Color="#3B82F6" />
         </LinearGradientBrush>
 
         <Style TargetType="Window">
@@ -112,7 +116,7 @@
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="CaretBrush" Value="{StaticResource PrimaryBrush}" />
-            <Setter Property="SelectionBrush" Value="#BFD0FF" />
+            <Setter Property="SelectionBrush" Value="#BFDBFE" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
@@ -189,12 +193,12 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="ItemSurface" Property="Background" Value="#EEF2FF" />
-                                <Setter Property="Foreground" Value="#4338CA" />
+                                <Setter TargetName="ItemSurface" Property="Background" Value="{StaticResource AccentHoverBackground}" />
+                                <Setter Property="Foreground" Value="{StaticResource AccentTextBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="ItemSurface" Property="Background" Value="#E0E7FF" />
-                                <Setter Property="Foreground" Value="#4338CA" />
+                                <Setter TargetName="ItemSurface" Property="Background" Value="{StaticResource AccentSelectedBackground}" />
+                                <Setter Property="Foreground" Value="{StaticResource AccentTextBrush}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.5" />
@@ -256,7 +260,7 @@
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="ComboSurface" Property="BorderBrush" Value="#7EA1F8" />
+                                                <Setter TargetName="ComboSurface" Property="BorderBrush" Value="#60A5FA" />
                                             </Trigger>
                                             <Trigger Property="IsChecked" Value="True">
                                                 <Setter TargetName="ComboSurface" Property="BorderBrush" Value="{StaticResource PrimaryBrush}" />
@@ -275,7 +279,7 @@
                                         MaxHeight="{TemplateBinding MaxDropDownHeight}"
                                         Margin="0,2,0,0"
                                         Background="White"
-                                        BorderBrush="#C7D2FE"
+                                        BorderBrush="{StaticResource AccentBorderBrush}"
                                         BorderThickness="1"
                                         CornerRadius="6">
                                     <ScrollViewer SnapsToDevicePixels="True">
@@ -407,12 +411,12 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="HeaderBorder" Property="Background" Value="#EEF2FF" />
-                                <Setter Property="Foreground" Value="#4338CA" />
+                                <Setter TargetName="HeaderBorder" Property="Background" Value="{StaticResource AccentHoverBackground}" />
+                                <Setter Property="Foreground" Value="{StaticResource AccentTextBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="HeaderBorder" Property="Background" Value="#E0E7FF" />
-                                <Setter Property="Foreground" Value="#4338CA" />
+                                <Setter TargetName="HeaderBorder" Property="Background" Value="{StaticResource AccentSelectedBackground}" />
+                                <Setter Property="Foreground" Value="{StaticResource AccentTextBrush}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.55" />
@@ -437,7 +441,7 @@
         </Style>
 
         <Style TargetType="DataGridColumnHeader">
-            <Setter Property="Background" Value="#EEF2FF" />
+            <Setter Property="Background" Value="{StaticResource AccentHoverBackground}" />
             <Setter Property="Foreground" Value="#334155" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Padding" Value="10,0" />
@@ -469,7 +473,7 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="HeaderSurface" Property="Background" Value="#E0E7FF" />
+                                <Setter TargetName="HeaderSurface" Property="Background" Value="{StaticResource AccentSelectedBackground}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -488,10 +492,10 @@
                     <Setter Property="Background" Value="#F8FAFC" />
                 </Trigger>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#EEF2FF" />
+                    <Setter Property="Background" Value="{StaticResource AccentHoverBackground}" />
                 </Trigger>
                 <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="#E0E7FF" />
+                    <Setter Property="Background" Value="{StaticResource AccentSelectedBackground}" />
                     <Setter Property="Foreground" Value="#1E293B" />
                 </Trigger>
             </Style.Triggers>
