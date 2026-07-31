@@ -5,11 +5,13 @@ BlockGame 是一个面向 Windows 11 的自我约束工具。它通过后台守�
 ## 当前版本包含
 
 - 文件名规则：例如 `steam.exe`、`game*.exe`
+- 文件名规则同时匹配 EXE 内部产品名和文件描述；仅修改外部文件名后仍可命中对应规则
 - 完整路径规则：支持 `*` 和 `?`
 - 网站域名规则：`poki.com` 会同时屏蔽其子域名，可一行一个或使用分号分隔
 - 网站屏蔽通过 Windows NRPT 只接管命中域名，不修改网卡全局 DNS，也不修改 `hosts`
 - 网站规则启用时关闭并锁定 Chrome、Edge、Firefox 的加密 DNS，停用或复位后恢复原值
 - 规则添加、启用、停用和删除
+- 规则可导出为独立 JSON 文件，也可从 JSON 导入；导入会校验安全性并跳过重复规则
 - 文件名可直接填写 `qq` 或 `qq*`，程序会自动补全为 `qq.exe` / `qq*.exe`
 - 单条文件名规则也可填写 `qq;wechat;steam*`，每一项分别匹配
 - 首次运行会添加“常见游戏平台”和“常见影音平台”两条内置预设，默认停用，可勾选启用、右键修改或删除
@@ -21,7 +23,7 @@ BlockGame 是一个面向 Windows 11 的自我约束工具。它通过后台守�
 - 成功拦截会实时写入“拦截事件”日志；守护服务会直接向当前 Windows 登录桌面发送“XX 软件已被拦截”提示，托盘控制面板作为失败兜底
 - LocalSystem Windows 服务，可自动重启
 - PBKDF2-SHA256 管理密码哈希和输错限速
-- 解除保护确认文本和冷静期（1 分钟～30 天）
+- 解除保护确认文本和冷静期（1 分钟～12 个月，可按小时、天或月设置；1 月按 30 天计算）
 - 一次性、十分钟有效的卸载授权令牌
 - 本地 JSON 配置、JSONL 审计日志和守护心跳
 - Windows 关键进程安全名单，避免规则误伤系统
@@ -48,6 +50,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -SelfContained
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
+## 构建 Setup.exe
+
+正式发布包默认包含 Windows x64 自带运行时版本，目标电脑无需另装 .NET：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 0.1.0
+```
+
+构建完成后发布以下两个文件：
+
+- `artifacts\release\BlockGame-Setup.exe`
+- `artifacts\release\BlockGame-Setup.exe.sha256`
+
+`BlockGame-Setup.exe` 会请求管理员权限，安装管理界面、后台守护服务、开机自启服务、开始菜单快捷方式和安全卸载入口。
+
 安装后打开“BlockGame 游戏自律助手”：
 
 1. 设置管理密码和解除冷静期。
@@ -59,7 +76,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 
 ## 正常卸载
 
-先在应用的“设置”页生成卸载授权，然后在 Windows“已安装的应用”中执行卸载。授权十分钟有效且只能使用一次。若保护处于锁定状态，必须先提交解除申请并等待冷静期结束。
+可以从以下任一入口运行独立卸载程序：
+
+- BlockGame“设置”页中的“卸载 BlockGame”
+- Windows“已安装的应用”
+- 开始菜单中的“卸载 BlockGame”
+- 安装目录中的 `BlockGame.Uninstall.exe`
+
+完成首次设置后，卸载程序必须验证 BlockGame 管理密码。若保护处于锁定状态，必须先提交解除申请并等待冷静期结束；尚未完成首次设置、还没有管理密码的安装可直接确认移除。卸载会删除本机规则、配置和审计日志。
 
 软件更新、重新安装和授权卸载会写入一个最多有效 30 秒的一次性维护标记，因此这些操作可以正常停止守护服务，不会触发自动拉起。
 

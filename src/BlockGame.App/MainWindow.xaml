@@ -15,7 +15,7 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="#101828" Padding="28,18">
+        <Border Grid.Row="0" Background="#1D4ED8" Padding="28,18">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -24,9 +24,10 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="BlockGame" FontSize="25" FontWeight="SemiBold" Foreground="White" />
-                    <TextBlock Text="把临时冲动变成需要等待的决定" Margin="0,4,0,0" Foreground="#B9C2D0" />
+                    <TextBlock Text="把临时冲动变成需要等待的决定" Margin="0,4,0,0" Foreground="#DCE7FF" />
                 </StackPanel>
                 <Button Grid.Column="1"
+                        Style="{StaticResource PrimaryButton}"
                         Margin="0,0,12,0"
                         Padding="16,8"
                         Background="#D92D20"
@@ -36,7 +37,7 @@
                         Content="调试一键复位"
                         ToolTip="最高优先级：立即暂停拦截、解除锁定并删除全部规则，不校验密码"
                         Click="DebugResetButton_Click" />
-                <Border Grid.Column="2" Background="#24334D" CornerRadius="20" Padding="14,7" VerticalAlignment="Center">
+                <Border Grid.Column="2" Background="#1E40AF" CornerRadius="2" Padding="14,7" VerticalAlignment="Center">
                     <TextBlock x:Name="HeaderGuardStatusText" Text="正在检查守护程序…" Foreground="White" />
                 </Border>
             </Grid>
@@ -47,19 +48,19 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="4,18,4,0">
                         <UniformGrid Columns="3">
-                            <Border Style="{StaticResource PanelCard}">
+                            <Border Style="{StaticResource PanelCard}" Margin="0,0,14,14">
                                 <StackPanel>
                                     <TextBlock Text="拦截状态" Foreground="{StaticResource MutedTextBrush}" />
                                     <TextBlock x:Name="ProtectionStatusText" Text="—" Margin="0,8,0,0" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
                                 </StackPanel>
                             </Border>
-                            <Border Style="{StaticResource PanelCard}">
+                            <Border Style="{StaticResource PanelCard}" Margin="0,0,14,14">
                                 <StackPanel>
                                     <TextBlock Text="设置锁" Foreground="{StaticResource MutedTextBrush}" />
                                     <TextBlock x:Name="LockStatusText" Text="—" Margin="0,8,0,0" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
                                 </StackPanel>
                             </Border>
-                            <Border Style="{StaticResource PanelCard}">
+                            <Border Style="{StaticResource PanelCard}" Margin="0,0,0,14">
                                 <StackPanel>
                                     <TextBlock Text="已启用规则" Foreground="{StaticResource MutedTextBrush}" />
                                     <TextBlock x:Name="RuleCountText" Text="0" Margin="0,8,0,0" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
@@ -80,11 +81,36 @@
                             </StackPanel>
                         </Border>
 
-                        <Border Background="#FFF7E8" BorderBrush="#F7C66B" BorderThickness="1" CornerRadius="10" Padding="16">
-                            <StackPanel>
-                                <TextBlock Text="第一版执行模式" FontWeight="SemiBold" Foreground="#8A4B08" />
-                                <TextBlock Margin="0,5,0,0" Text="当前使用高频进程启动监控并立即终止命中程序。AppLocker / WDAC 严格模式尚未启用，因此程序可能短暂出现。" TextWrapping="Wrap" Foreground="#8A4B08" />
-                            </StackPanel>
+                        <Border Style="{StaticResource PanelCard}" Margin="0,0,0,14">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="190" />
+                                    <ColumnDefinition Width="1" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock Text="累计已拦截" Foreground="{StaticResource MutedTextBrush}" />
+                                    <TextBlock x:Name="BlockedCountText"
+                                               Text="0 次"
+                                               Margin="0,8,0,0"
+                                               FontSize="28"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextBrush}" />
+                                </StackPanel>
+                                <Border Grid.Column="1" Background="#EAECF0" />
+                                <StackPanel Grid.Column="2" Margin="20,0,0,0">
+                                    <TextBlock Text="最近拦截内容"
+                                               FontSize="17"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextBrush}" />
+                                    <TextBlock x:Name="RecentBlockedContentText"
+                                               Margin="0,8,0,0"
+                                               Text="暂无拦截记录"
+                                               TextWrapping="Wrap"
+                                               LineHeight="23"
+                                               Foreground="{StaticResource MutedTextBrush}" />
+                                </StackPanel>
+                            </Grid>
                         </Border>
                     </StackPanel>
                 </ScrollViewer>
@@ -123,7 +149,7 @@
                             </StackPanel>
                             <StackPanel Grid.Column="2" Margin="0,0,12,0">
                                 <TextBlock x:Name="RulePatternHelpText"
-                                           Text="匹配内容（可一行一个或用 ; 分隔，支持 * 和 ?，自动补 .exe）"
+                                           Text="匹配文件名、内部产品名或文件描述（支持 * 和 ?，自动补 .exe）"
                                            Margin="0,0,0,5"
                                            Foreground="{StaticResource MutedTextBrush}" />
                                 <TextBox x:Name="RulePatternTextBox"
@@ -172,8 +198,10 @@
                     </DataGrid>
 
                     <WrapPanel Grid.Row="2" Margin="0,14,0,0">
+                        <Button Style="{StaticResource SecondaryButton}" Content="导入规则" Click="ImportRulesButton_Click" />
+                        <Button Style="{StaticResource SecondaryButton}" Content="导出规则" Click="ExportRulesButton_Click" />
                         <Button Style="{StaticResource DangerButton}" Content="删除选中规则" Click="DeleteRuleButton_Click" />
-                        <TextBlock Margin="8,9,0,0" Foreground="{StaticResource MutedTextBrush}" Text="内置默认规则初始停用；右键可修改，点击复选框可启停。锁定期间不能修改、停用或删除。" />
+                        <TextBlock Margin="8,9,0,0" Foreground="{StaticResource MutedTextBrush}" Text="导入会跳过重复规则；锁定期间不能导入、修改、停用或删除。" />
                     </WrapPanel>
                 </Grid>
             </TabItem>
@@ -205,10 +233,18 @@
                         <Border Style="{StaticResource PanelCard}" Margin="0,0,0,14">
                             <StackPanel>
                                 <TextBlock Text="冷静期" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
-                                <TextBlock Text="锁定期间只能延长，不能缩短。" Margin="0,4,0,12" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="锁定期间只能延长，不能缩短；1 月按 30 天计算，最长 12 个月。" Margin="0,4,0,12" Foreground="{StaticResource MutedTextBrush}" />
                                 <DockPanel LastChildFill="False">
-                                    <TextBox x:Name="UnlockDelayHoursTextBox" Width="120" />
-                                    <TextBlock Text="小时" Margin="9,8,18,0" />
+                                    <TextBox x:Name="UnlockDelayValueTextBox" Width="120" />
+                                    <ComboBox x:Name="UnlockDelayUnitComboBox"
+                                              Width="90"
+                                              Margin="9,0,18,0"
+                                              SelectedIndex="0"
+                                              SelectionChanged="UnlockDelayUnitComboBox_SelectionChanged">
+                                        <ComboBoxItem Content="小时" Tag="Hours" />
+                                        <ComboBoxItem Content="天" Tag="Days" />
+                                        <ComboBoxItem Content="月" Tag="Months" />
+                                    </ComboBox>
                                     <Button Style="{StaticResource SecondaryButton}" Content="保存冷静期" Click="SaveDelayButton_Click" />
                                 </DockPanel>
                             </StackPanel>
@@ -234,9 +270,9 @@
 
                         <Border Style="{StaticResource PanelCard}" Margin="0,0,0,14">
                             <StackPanel>
-                                <TextBlock Text="卸载授权" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
-                                <TextBlock Text="完成解除后，可生成一个仅十分钟有效的一次性卸载令牌。" Margin="0,4,0,12" Foreground="{StaticResource MutedTextBrush}" />
-                                <Button Width="150" HorizontalAlignment="Left" Style="{StaticResource DangerButton}" Content="生成卸载授权" Click="AuthorizeUninstallButton_Click" />
+                                <TextBlock Text="卸载软件" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                <TextBlock Text="独立卸载程序会再次验证管理密码；保护处于锁定状态时，必须先完成解除流程。" Margin="0,4,0,12" Foreground="{StaticResource MutedTextBrush}" />
+                                <Button Width="150" HorizontalAlignment="Left" Style="{StaticResource DangerButton}" Content="卸载 BlockGame" Click="OpenUninstallerButton_Click" />
                             </StackPanel>
                         </Border>
 
@@ -246,7 +282,7 @@
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="2" Background="#EAECF0" Padding="22,9">
+        <Border Grid.Row="2" Background="#EAF0FF" Padding="22,9">
             <TextBlock Text="BlockGame v0.1 · 本工具提供自我约束阻力，但本机管理员仍拥有最终系统恢复能力。" Foreground="#667085" />
         </Border>
     </Grid>

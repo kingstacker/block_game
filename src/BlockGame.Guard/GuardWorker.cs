@@ -18,6 +18,7 @@ internal sealed class GuardWorker
     private readonly HostsFileManager _hostsFileManager;
     private readonly NrptPolicyManager _nrptPolicyManager;
     private readonly BrowserDnsPolicyManager _browserDnsPolicyManager;
+    private readonly ExecutableMetadataResolver _metadataResolver = new();
     private readonly Dictionary<string, DateTimeOffset> _lastFailureLogs = new();
     private readonly Dictionary<string, DateTimeOffset> _lastWebsiteNotifications = new(
         StringComparer.OrdinalIgnoreCase);
@@ -68,6 +69,11 @@ internal sealed class GuardWorker
             catch (System.Text.Json.JsonException exception)
             {
                 LogFailureWithThrottle("config-json", "配置格式损坏，继续使用最后一份有效配置：" + exception.Message);
+            }
+            catch (InvalidDataException exception)
+            {
+                // 空配置或更高版本 schema 不能让守护进程崩溃重启，保护必须继续。
+                LogFailureWithThrottle("config-invalid", "配置内容无效，继续使用最后一份有效配置：" + exception.Message);
             }
 
             if (lastKnownGoodConfig.ProtectionEnabled
@@ -176,6 +182,7 @@ internal sealed class GuardWorker
             .ToArray();
         try
         {
+            bool browserPoliciesHealthy;
             if (domains.Count > 0)
             {
                 if (_dnsBlockServer is null)
@@ -208,14 +215,23 @@ internal sealed class GuardWorker
                 }
 
                 _dnsBlockServer.UpdateRegistrations(registrations);
-                TryApplyBrowserPolicies(domains);
+                browserPoliciesHealthy = TryApplyBrowserPolicies(domains);
                 _nrptPolicyManager.Synchronize(domains);
             }
             else
             {
                 _nrptPolicyManager.Synchronize([]);
-                TryRestoreBrowserDnsPolicies();
+                browserPoliciesHealthy = TryRestoreBrowserDnsPolicies();
                 _dnsBlockServer?.UpdateRegistrations([]);
+            }
+
+            if (!browserPoliciesHealthy)
+            {
+                // 浏览器策略没有完全生效时不能记成已同步，否则不会再重试；
+                // NRPT 和本机DNS已就绪，稍后只需整体重试补齐浏览器策略。
+                _websitePolicySignature = null;
+                _nextWebsitePolicyRetryUtc = nowUtc.Add(FailureLogInterval);
+                return;
             }
 
             _websitePolicySignature = signature;
@@ -237,28 +253,40 @@ internal sealed class GuardWorker
         }
     }
 
-    private void TryApplyBrowserPolicies(IReadOnlyCollection<string> domains)
+    private bool TryApplyBrowserPolicies(IReadOnlyCollection<string> domains)
     {
         try
         {
-            _browserDnsPolicyManager.Apply(domains);
+            int skippedDomains = _browserDnsPolicyManager.Apply(domains);
+            if (skippedDomains > 0)
+            {
+                LogFailureWithThrottle(
+                    "browser-url-blocklist-capacity",
+                    $"浏览器网址拦截策略条目已达上限，{skippedDomains} 个域名未写入浏览器策略；"
+                        + "这些域名仍由NRPT和本机DNS拦截兜底。");
+            }
+
+            return true;
         }
         catch (Exception exception) when (
             exception is IOException
                 or UnauthorizedAccessException
-                or System.Security.SecurityException)
+                or System.Security.SecurityException
+                or System.Text.Json.JsonException)
         {
             LogFailureWithThrottle(
                 "browser-doh-policy",
-                "浏览器加密DNS策略同步失败；NRPT网站拦截仍会继续尝试：" + exception.Message);
+                "浏览器加密DNS策略同步失败，稍后自动重试；NRPT网站拦截仍会继续尝试：" + exception.Message);
+            return false;
         }
     }
 
-    private void TryRestoreBrowserDnsPolicies()
+    private bool TryRestoreBrowserDnsPolicies()
     {
         try
         {
             _browserDnsPolicyManager.Restore();
+            return true;
         }
         catch (Exception exception) when (
             exception is IOException
@@ -268,7 +296,8 @@ internal sealed class GuardWorker
         {
             LogFailureWithThrottle(
                 "browser-doh-policy-restore",
-                "恢复浏览器加密DNS策略失败：" + exception.Message);
+                "恢复浏览器加密DNS策略失败，稍后自动重试：" + exception.Message);
+            return false;
         }
     }
 
@@ -330,7 +359,10 @@ internal sealed class GuardWorker
 
     private void ScanAndBlock(AppConfig config)
     {
-        bool needsFullPath = config.Rules.Any(rule => rule.Enabled && rule.Target == RuleTarget.FullPath);
+        bool hasFileNameRules = config.Rules.Any(
+            rule => rule.Enabled && rule.Target == RuleTarget.FileName);
+        bool hasFullPathRules = config.Rules.Any(
+            rule => rule.Enabled && rule.Target == RuleTarget.FullPath);
         Process[] processes;
         try
         {
@@ -342,6 +374,7 @@ internal sealed class GuardWorker
             return;
         }
 
+        var activeProcessIds = new HashSet<int>();
         foreach (Process process in processes)
         {
             using (process)
@@ -362,13 +395,27 @@ internal sealed class GuardWorker
                 {
                     continue;
                 }
+                activeProcessIds.Add(processId);
 
                 string fileName = SafetyPolicy.NormalizeFileName(processName);
-                string? fullPath = needsFullPath
-                    ? ProcessPathResolver.TryGetPath(processId)
-                    : null;
-                var descriptor = new ProcessDescriptor(processId, fileName, fullPath);
+                var descriptor = new ProcessDescriptor(processId, fileName, null);
                 RuleMatch? match = RuleMatcher.Match(config, descriptor);
+                if (match is null
+                    && (hasFileNameRules || hasFullPathRules)
+                    && !SafetyPolicy.IsProtectedSystemProcess(descriptor))
+                {
+                    ExecutableMetadata metadata = _metadataResolver.Read(
+                        processId,
+                        fileName);
+                    descriptor = descriptor with
+                    {
+                        FullPath = metadata.FullPath,
+                        ProductName = metadata.ProductName,
+                        FileDescription = metadata.FileDescription
+                    };
+                    match = RuleMatcher.Match(config, descriptor);
+                }
+
                 if (match is null)
                 {
                     continue;
@@ -377,6 +424,8 @@ internal sealed class GuardWorker
                 TryTerminate(process, match);
             }
         }
+
+        _metadataResolver.RetainOnly(activeProcessIds);
     }
 
     private bool CleanupLegacyWebsiteRules()

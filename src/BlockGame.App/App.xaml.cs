@@ -9,13 +9,28 @@ namespace BlockGame.App;
 
 public partial class App : System.Windows.Application
 {
+    private const string SingleInstanceMutexName = @"Global\BlockGame.App.SingleInstance";
+
     private Forms.NotifyIcon? _trayIcon;
+    private Mutex? _singleInstanceMutex;
     private bool _exitRequested;
     private bool _openingWindow;
 
     protected override void OnStartup(StartupEventArgs eventArgs)
     {
         base.OnStartup(eventArgs);
+
+        if (!TryClaimSingleInstance())
+        {
+            // 两个控制面板同时读改写配置会互相覆盖规则、锁状态和密码限流计数。
+            MessageBox.Show(
+                "BlockGame 已在运行。请通过任务栏托盘图标打开管理界面。",
+                "BlockGame",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            Shutdown();
+            return;
+        }
 
         try
         {
@@ -121,7 +136,46 @@ public partial class App : System.Windows.Application
             _trayIcon = null;
         }
 
+        if (_singleInstanceMutex is not null)
+        {
+            try
+            {
+                _singleInstanceMutex.ReleaseMutex();
+            }
+            catch (ApplicationException)
+            {
+                // 未持有时直接释放句柄即可。
+            }
+
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+        }
+
         base.OnExit(eventArgs);
+    }
+
+    private bool TryClaimSingleInstance()
+    {
+        try
+        {
+            _singleInstanceMutex = new Mutex(
+                initiallyOwned: true,
+                SingleInstanceMutexName,
+                out bool createdNew);
+            if (!createdNew)
+            {
+                _singleInstanceMutex.Dispose();
+                _singleInstanceMutex = null;
+            }
+
+            return createdNew;
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException or IOException)
+        {
+            // 互斥体已被其他权限的实例创建：同样视为已在运行。
+            return false;
+        }
     }
 
     private void InitializeTrayIcon(MainWindow mainWindow)

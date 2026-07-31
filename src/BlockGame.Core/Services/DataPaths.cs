@@ -20,6 +20,10 @@ public sealed class DataPaths
 
     public string AuditFile => Path.Combine(RootDirectory, "audit.jsonl");
 
+    public string AuditArchiveFile => Path.Combine(RootDirectory, "audit.1.jsonl");
+
+    public string AuditStatsFile => Path.Combine(RootDirectory, "audit-stats.json");
+
     public string HeartbeatFile => Path.Combine(RootDirectory, "guard-heartbeat.json");
 
     public string UninstallTokenFile => Path.Combine(RootDirectory, "uninstall.token");

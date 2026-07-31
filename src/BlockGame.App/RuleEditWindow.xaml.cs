@@ -55,7 +55,7 @@ public partial class RuleEditWindow : Window
         {
             RuleTarget.FullPath => "匹配内容（完整 EXE 路径，支持 * 和 ?）",
             RuleTarget.Domain => "网站域名（可一行一个或用 ; 分隔；域名规则同时覆盖其子域名）",
-            _ => "匹配内容（可一行一个或用 ; 分隔，支持 * 和 ?，自动补 .exe）"
+            _ => "匹配文件名、内部产品名或文件描述（可一行一个或用 ; 分隔，支持 * 和 ?，自动补 .exe）"
         };
         BrowseExeButton.IsEnabled = target != RuleTarget.Domain;
     }

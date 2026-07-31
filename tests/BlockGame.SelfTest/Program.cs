@@ -12,15 +12,22 @@ internal static class Program
             ("密码哈希", PasswordHashRoundTrip),
             ("密码输错限速", PasswordRateLimit),
             ("通配符和规则匹配", RuleMatching),
+            ("规则导入导出", RuleTransferRoundTrip),
             ("默认游戏平台和影音规则", DefaultRules),
             ("网站域名规则", WebsiteDomainRulesTest),
             ("DNS 拦截响应", DnsBlockedResponse),
             ("旧 hosts 托管区清理", LegacyHostsCleanup),
             ("关键系统进程安全名单", SafetyList),
+            ("自身组件路径校验", OwnComponentPathVerification),
+            ("完整路径规则通配校验", FullPathRuleValidation),
             ("最高优先级调试复位", DebugReset),
+            ("冷静期单位换算", UnlockDelayUnitConversion),
             ("解除冷静期", UnlockCooldown),
+            ("锁定期间延长冷静期", UnlockDelayExtension),
             ("一次性卸载令牌", UninstallToken),
-            ("配置和审计持久化", Persistence)
+            ("密码保护卸载授权", PasswordProtectedUninstall),
+            ("配置和审计持久化", Persistence),
+            ("审计日志轮转", AuditRotation)
         };
 
         int failed = 0;
@@ -90,13 +97,46 @@ internal static class Program
         Assert(match is not null, "文件名规则未命中。 ");
         Assert(RuleMatcher.Match(config, new ProcessDescriptor(1235, "Editor", null)) is null, "无关程序被误匹配。 ");
 
+        config.Rules[0].Pattern = "steam";
+        Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(
+                    1236,
+                    "renamed-client",
+                    @"C:\Games\renamed-client.exe",
+                    ProductName: "Steam",
+                    FileDescription: "Steam Client Bootstrapper")) is not null,
+            "修改文件名后未通过内部产品名命中规则。 ");
+        config.Rules[0].Pattern = "steam client bootstrapper";
+        Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(
+                    1237,
+                    "another-name",
+                    @"C:\Games\another-name.exe",
+                    ProductName: "Valve Client",
+                    FileDescription: "Steam Client Bootstrapper")) is not null,
+            "修改文件名后未通过文件描述命中规则。 ");
+        Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(
+                    1238,
+                    "unrelated",
+                    @"C:\Tools\unrelated.exe",
+                    ProductName: "Unrelated Product",
+                    FileDescription: "Unrelated Tool")) is null,
+            "无关内部产品信息被误匹配。 ");
+
         config.Rules[0].Pattern = "qq";
         Assert(
-            RuleMatcher.Match(config, new ProcessDescriptor(1236, "QQ", null)) is not null,
+            RuleMatcher.Match(config, new ProcessDescriptor(1239, "QQ", null)) is not null,
             "未自动为 qq 规则补全 .exe。 ");
         config.Rules[0].Pattern = "qq*";
         Assert(
-            RuleMatcher.Match(config, new ProcessDescriptor(1237, "QQApp", null)) is not null,
+            RuleMatcher.Match(config, new ProcessDescriptor(1240, "QQApp", null)) is not null,
             "无扩展名的 QQ 通配规则未命中。 ");
         Assert(SafetyPolicy.NormalizeFileNameRulePatterns(config), "旧规则未触发规范化迁移。 ");
         Assert(config.Rules[0].Pattern == "qq*.exe", "旧规则未保存为明确的 .exe 通配规则。 ");
@@ -104,13 +144,13 @@ internal static class Program
 
         config.Rules[0].Pattern = " qq ; WeChat*；game.exe; ";
         Assert(
-            RuleMatcher.Match(config, new ProcessDescriptor(1238, "QQ", null)) is not null,
+            RuleMatcher.Match(config, new ProcessDescriptor(1241, "QQ", null)) is not null,
             "多程序规则未匹配 QQ。 ");
         Assert(
-            RuleMatcher.Match(config, new ProcessDescriptor(1239, "WeChatApp", null)) is not null,
+            RuleMatcher.Match(config, new ProcessDescriptor(1242, "WeChatApp", null)) is not null,
             "多程序规则中的通配符未生效。 ");
         Assert(
-            RuleMatcher.Match(config, new ProcessDescriptor(1240, "game.exe", null)) is not null,
+            RuleMatcher.Match(config, new ProcessDescriptor(1243, "game.exe", null)) is not null,
             "多程序规则未匹配已有扩展名的程序。 ");
         Assert(
             SafetyPolicy.NormalizeFileNamePattern(" qq ; WeChat*；game.exe; ")
@@ -142,6 +182,142 @@ internal static class Program
             RuleMatcher.Match(config, new ProcessDescriptor(100, "explorer.exe", null)) is null,
             "关键系统进程未受到运行时安全名单保护。 ");
         Assert(SafetyPolicy.ValidateRule(config.Rules[0]) is not null, "危险规则通过了保存前验证。 ");
+    }
+
+    private static void OwnComponentPathVerification()
+    {
+        string ownDirectory = Path.GetDirectoryName(Environment.ProcessPath)
+            ?? AppContext.BaseDirectory;
+        Assert(
+            SafetyPolicy.IsProtectedProcess(new ProcessDescriptor(
+                600,
+                "BlockGame.Guard.exe",
+                Path.Combine(ownDirectory, "BlockGame.Guard.exe"))),
+            "安装目录中的自身组件未受保护。 ");
+        Assert(
+            SafetyPolicy.IsProtectedProcess(
+                new ProcessDescriptor(601, "BlockGame.Guard.exe", null)),
+            "路径未知时应保守地视为自身组件，待解析路径后复查。 ");
+        Assert(
+            !SafetyPolicy.IsProtectedProcess(new ProcessDescriptor(
+                602,
+                "BlockGame.steam.exe",
+                @"C:\Games\BlockGame.steam.exe")),
+            "改名为 BlockGame.* 的外部程序不应获得自身组件保护。 ");
+        Assert(
+            SafetyPolicy.IsProtectedSystemProcess(
+                new ProcessDescriptor(603, "svchost.exe", null)),
+            "系统进程未列入无需路径解析的安全名单。 ");
+        Assert(
+            !SafetyPolicy.IsProtectedSystemProcess(
+                new ProcessDescriptor(604, "BlockGame.App.exe", null)),
+            "BlockGame 组件不应跳过路径解析（否则改名程序永远不会被识破）。 ");
+
+        var config = new AppConfig
+        {
+            ProtectionEnabled = true,
+            Rules =
+            [
+                new BlockRule
+                {
+                    Name = "Steam",
+                    Target = RuleTarget.FileName,
+                    Pattern = "steam"
+                }
+            ]
+        };
+        Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(
+                    605,
+                    "BlockGame.steam.exe",
+                    @"C:\Games\BlockGame.steam.exe",
+                    ProductName: "Steam")) is not null,
+            "改名为 BlockGame.* 后仍应通过内部产品名命中规则。 ");
+        config.Rules[0] = new BlockRule
+        {
+            Name = "游戏目录",
+            Target = RuleTarget.FullPath,
+            Pattern = @"C:\Games\*.exe"
+        };
+        Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(
+                    606,
+                    "BlockGame.steam.exe",
+                    @"C:\Games\BlockGame.steam.exe")) is not null,
+            "改名为 BlockGame.* 后仍应命中完整路径规则。 ");
+        config.Rules[0] = new BlockRule
+        {
+            Name = "误杀测试",
+            Target = RuleTarget.FullPath,
+            Pattern = Path.Combine(ownDirectory, "*.exe")
+        };
+        string ownComponentPath = Path.Combine(ownDirectory, "BlockGame.Guard.exe");
+        Assert(
+            WildcardMatcher.IsMatch(ownComponentPath, config.Rules[0].Pattern),
+            "误杀测试的路径规则没有覆盖到自身组件路径，测试无效。 ");
+        Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(607, "BlockGame.Guard.exe", ownComponentPath)) is null,
+            "安装目录中的自身组件被规则误杀。 ");
+    }
+
+    private static void FullPathRuleValidation()
+    {
+        var rule = new BlockRule
+        {
+            Name = "路径规则",
+            Target = RuleTarget.FullPath,
+            Pattern = @"C:\Games\MyGame\game.exe"
+        };
+        Assert(SafetyPolicy.ValidateRule(rule) is null, "正常完整路径规则未通过校验。 ");
+
+        rule.Pattern = @"C:\Games\*.exe";
+        Assert(SafetyPolicy.ValidateRule(rule) is null, "游戏目录通配规则未通过校验。 ");
+
+        rule.Pattern = @"C:\Users\*\AppData\Local\MyGame\game.exe";
+        Assert(SafetyPolicy.ValidateRule(rule) is null, "跨用户目录的通配规则未通过校验。 ");
+
+        rule.Pattern = @"C:\Windows Games\game.exe";
+        Assert(
+            SafetyPolicy.ValidateRule(rule) is null,
+            "与 Windows 目录同前缀的普通目录被误拒。 ");
+
+        rule.Pattern = @"C:\*.exe";
+        Assert(SafetyPolicy.ValidateRule(rule) is not null, "全盘 *.exe 通配规则通过了校验。 ");
+
+        rule.Pattern = @"C:\*";
+        Assert(SafetyPolicy.ValidateRule(rule) is not null, "全盘通配规则通过了校验。 ");
+
+        rule.Pattern = @"C:\Win*\System32\*.exe";
+        Assert(
+            SafetyPolicy.ValidateRule(rule) is not null,
+            "可展开到 Windows 目录的通配规则通过了校验。 ");
+
+        string windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        rule.Pattern = Path.Combine(windowsDirectory, "System32", "cmd.exe");
+        Assert(
+            SafetyPolicy.ValidateRule(rule) is not null,
+            "Windows 系统目录内的完整路径规则通过了校验。 ");
+
+        rule.Pattern = windowsDirectory + @"\*";
+        Assert(
+            SafetyPolicy.ValidateRule(rule) is not null,
+            "Windows 目录通配规则通过了校验。 ");
+
+        rule.Pattern = @"game.exe";
+        Assert(
+            SafetyPolicy.ValidateRule(rule) is not null,
+            "缺少盘符的完整路径规则通过了校验。 ");
+
+        rule.Pattern = @"*\Games\game.exe";
+        Assert(
+            SafetyPolicy.ValidateRule(rule) is not null,
+            "以通配符开头的完整路径规则通过了校验。 ");
     }
 
     private static void DefaultRules()
@@ -398,6 +574,101 @@ internal static class Program
         Assert(config.ProtectionEnabled, "完成解除不应自动停止拦截。 ");
     }
 
+    private static void UnlockDelayExtension()
+    {
+        var config = new AppConfig { UnlockDelayMinutes = 60 };
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        ProtectionManager.EnableAndLock(config);
+        ProtectionManager.RequestUnlock(config, ProtectionManager.UnlockConfirmationText, now);
+        DateTimeOffset originalDeadline = config.UnlockAvailableAtUtc!.Value;
+
+        bool shortenRejected = false;
+        try
+        {
+            ProtectionManager.ChangeUnlockDelay(config, 30, now.AddMinutes(5));
+        }
+        catch (InvalidOperationException)
+        {
+            shortenRejected = true;
+        }
+
+        Assert(shortenRejected, "锁定期间缩短冷静期未被拒绝。 ");
+        Assert(
+            config.UnlockDelayMinutes == 60 && config.UnlockAvailableAtUtc == originalDeadline,
+            "被拒绝的缩短操作仍然修改了配置。 ");
+
+        Assert(
+            ProtectionManager.ChangeUnlockDelay(config, 120, now.AddMinutes(5)),
+            "已申请解除时延长冷静期未报告顺延截止时间。 ");
+        Assert(config.UnlockDelayMinutes == 120, "延长后的冷静期时长未保存。 ");
+        Assert(
+            config.UnlockAvailableAtUtc == now.AddMinutes(120),
+            "延长冷静期未按申请时间同步顺延解除截止时间。 ");
+
+        bool stillBlocked = false;
+        try
+        {
+            ProtectionManager.CompleteUnlock(config, now.AddMinutes(90));
+        }
+        catch (InvalidOperationException)
+        {
+            stillBlocked = true;
+        }
+
+        Assert(stillBlocked, "顺延后的截止时间没有真正生效。 ");
+
+        var idle = new AppConfig { UnlockDelayMinutes = 60 };
+        Assert(
+            !ProtectionManager.ChangeUnlockDelay(idle, 30, now),
+            "没有解除申请时不应报告顺延。 ");
+        Assert(idle.UnlockDelayMinutes == 30, "未锁定时缩短冷静期应被允许。 ");
+    }
+
+    private static void UnlockDelayUnitConversion()
+    {
+        Assert(
+            UnlockDelayPolicy.TryConvertToMinutes(
+                2,
+                UnlockDelayUnit.Hours,
+                out int hours)
+            && hours == 120,
+            "小时未正确换算为分钟。 ");
+        Assert(
+            UnlockDelayPolicy.TryConvertToMinutes(
+                2,
+                UnlockDelayUnit.Days,
+                out int days)
+            && days == 2 * 24 * 60,
+            "天未正确换算为分钟。 ");
+        Assert(
+            UnlockDelayPolicy.TryConvertToMinutes(
+                1.5,
+                UnlockDelayUnit.Months,
+                out int months)
+            && months == 45 * 24 * 60,
+            "月未按 30 天正确换算。 ");
+        Assert(
+            UnlockDelayPolicy.TryConvertToMinutes(
+                12,
+                UnlockDelayUnit.Months,
+                out int maximum)
+            && maximum == UnlockDelayPolicy.MaximumDelayMinutes,
+            "12 个月上限未通过。 ");
+        Assert(
+            !UnlockDelayPolicy.TryConvertToMinutes(
+                12.01,
+                UnlockDelayUnit.Months,
+                out _),
+            "超过 12 个月的冷静期未被拒绝。 ");
+        Assert(
+            Math.Abs(
+                UnlockDelayPolicy.ConvertFromMinutes(
+                    45 * 24 * 60,
+                    UnlockDelayUnit.Months)
+                - 1.5) < 0.000001,
+            "分钟未正确换算回月。 ");
+    }
+
     private static void DebugReset()
     {
         var config = new AppConfig
@@ -444,6 +715,112 @@ internal static class Program
             "一次性令牌被重复使用。 ");
     }
 
+    private static void PasswordProtectedUninstall()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var configured = new AppConfig
+        {
+            SetupCompleted = true,
+            Password = PasswordHasher.Create("correct-horse", 100_000)
+        };
+
+        UninstallPreparationResult wrongPassword =
+            PasswordProtectedUninstallService.Prepare(configured, "wrong-password", now);
+        Assert(!wrongPassword.Success && wrongPassword.Token is null, "错误密码生成了卸载授权。");
+
+        UninstallPreparationResult correctPassword =
+            PasswordProtectedUninstallService.Prepare(configured, "correct-horse", now);
+        Assert(
+            correctPassword.Success
+                && correctPassword.PasswordVerified
+                && !string.IsNullOrWhiteSpace(correctPassword.Token),
+            "正确密码未生成卸载授权。");
+
+        var locked = new AppConfig
+        {
+            SetupCompleted = true,
+            ProtectionLocked = true,
+            Password = PasswordHasher.Create("correct-horse", 100_000)
+        };
+        UninstallPreparationResult lockedResult =
+            PasswordProtectedUninstallService.Prepare(locked, "correct-horse", now);
+        Assert(
+            !lockedResult.Success && lockedResult.ProtectionLocked && lockedResult.Token is null,
+            "锁定状态下生成了卸载授权。");
+
+        var notConfigured = new AppConfig { SetupCompleted = false };
+        UninstallPreparationResult notConfiguredResult =
+            PasswordProtectedUninstallService.Prepare(notConfigured, null, now);
+        Assert(
+            notConfiguredResult.Success
+                && !notConfiguredResult.PasswordVerified
+                && !string.IsNullOrWhiteSpace(notConfiguredResult.Token),
+            "尚未首次设置的安装无法移除。");
+    }
+
+    private static void RuleTransferRoundTrip()
+    {
+        var sourceRules = new[]
+        {
+            new BlockRule
+            {
+                Name = "Steam",
+                Target = RuleTarget.FileName,
+                Pattern = "steam",
+                Enabled = true
+            },
+            new BlockRule
+            {
+                Name = "Poki",
+                Target = RuleTarget.Domain,
+                Pattern = "https://poki.com/zh",
+                Enabled = false
+            }
+        };
+
+        string json = RuleTransferService.Export(sourceRules);
+        IReadOnlyList<BlockRule> imported = RuleTransferService.Import(json);
+        Assert(imported.Count == 2, "导入后的规则数量不正确。 ");
+        Assert(
+            imported[0].Pattern == "steam.exe"
+                && imported[0].Target == RuleTarget.FileName
+                && imported[0].Enabled,
+            "程序规则未正确导入或规范化。 ");
+        Assert(
+            imported[1].Pattern == "poki.com"
+                && imported[1].Target == RuleTarget.Domain
+                && !imported[1].Enabled,
+            "网站规则未正确导入或保留启用状态。 ");
+        Assert(
+            imported[0].Id != sourceRules[0].Id,
+            "导入规则复用了原规则 ID。 ");
+
+        bool invalidRejected = false;
+        try
+        {
+            RuleTransferService.Import(
+                """
+                {
+                  "formatVersion": 1,
+                  "rules": [
+                    {
+                      "name": "危险规则",
+                      "target": "FileName",
+                      "pattern": "*",
+                      "enabled": true
+                    }
+                  ]
+                }
+                """);
+        }
+        catch (InvalidDataException)
+        {
+            invalidRejected = true;
+        }
+
+        Assert(invalidRejected, "危险的导入规则未被拒绝。 ");
+    }
+
     private static void Persistence()
     {
         string root = Path.Combine(Path.GetTempPath(), "BlockGameSelfTest", Guid.NewGuid().ToString("N"));
@@ -476,6 +853,89 @@ internal static class Program
             Assert(persistedEntry.EventType == "ProcessBlocked", "审计记录未正确还原。 ");
             Assert(persistedEntry.ProcessName == "Test.exe", "拦截程序名未写入审计记录。 ");
             Assert(persistedEntry.DesktopNotificationSent == true, "桌面通知投递状态未写入审计记录。 ");
+
+            audit.Append(new AuditEntry
+            {
+                EventType = "WebsiteBlocked",
+                Message = "网站 example.com 已被拦截。",
+                Domain = "example.com"
+            });
+            audit.Append(new AuditEntry
+            {
+                EventType = "ProcessBlocked",
+                Message = "拦截失败记录不应计入累计数。",
+                Success = false
+            });
+            AuditSnapshot snapshot = audit.ReadSnapshot(maximumCount: 2);
+            Assert(snapshot.TotalBlockedCount == 2, "累计成功拦截数统计错误。 ");
+            Assert(snapshot.Entries.Count == 2, "审计快照未遵守最近记录数量。 ");
+            Assert(
+                snapshot.Entries[0].Success == false
+                    && snapshot.Entries[1].EventType == "WebsiteBlocked",
+                "审计快照的最近记录顺序错误。 ");
+        }
+        finally
+        {
+            string fullRoot = Path.GetFullPath(root);
+            string expectedParent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "BlockGameSelfTest"));
+            if (fullRoot.StartsWith(expectedParent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                && Directory.Exists(fullRoot))
+            {
+                Directory.Delete(fullRoot, recursive: true);
+            }
+        }
+    }
+
+    private static void AuditRotation()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "BlockGameSelfTest", Guid.NewGuid().ToString("N"));
+        var paths = new DataPaths(root);
+        try
+        {
+            var audit = new AuditLog(paths, rotationThresholdBytes: 512);
+            const int totalBlocked = 40;
+            for (int index = 0; index < totalBlocked; index++)
+            {
+                audit.Append(new AuditEntry
+                {
+                    EventType = "ProcessBlocked",
+                    Message = $"已阻止 test-{index}.exe。",
+                    ProcessName = $"test-{index}.exe"
+                });
+            }
+
+            Assert(File.Exists(paths.AuditArchiveFile), "超过阈值后审计日志未轮转出归档文件。 ");
+            Assert(
+                new FileInfo(paths.AuditFile).Length < 4 * 1024,
+                "轮转后当前审计文件仍在无限增长。 ");
+
+            AuditSnapshot snapshot = audit.ReadSnapshot();
+            Assert(
+                snapshot.TotalBlockedCount == totalBlocked,
+                $"轮转后累计拦截数丢失：期望 {totalBlocked}，实际 {snapshot.TotalBlockedCount}。 ");
+            Assert(snapshot.Entries.Count > 0, "轮转后读不到最近审计记录。 ");
+            Assert(
+                snapshot.Entries[0].Message.Contains($"test-{totalBlocked - 1}", StringComparison.Ordinal),
+                "轮转后最近记录顺序错误。 ");
+
+            string tokenBefore = audit.GetChangeToken();
+            Assert(
+                string.Equals(tokenBefore, audit.GetChangeToken(), StringComparison.Ordinal),
+                "文件未变化时变更标记不稳定。 ");
+            audit.Append(new AuditEntry
+            {
+                EventType = "GuardWarning",
+                Message = "变更标记测试。",
+                Success = false
+            });
+            Assert(
+                !string.Equals(tokenBefore, audit.GetChangeToken(), StringComparison.Ordinal),
+                "追加记录后变更标记未变化。 ");
+
+            AuditSnapshot finalSnapshot = audit.ReadSnapshot();
+            Assert(
+                finalSnapshot.TotalBlockedCount == totalBlocked,
+                "失败记录不应改变累计拦截数。 ");
         }
         finally
         {

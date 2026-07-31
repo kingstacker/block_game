@@ -34,7 +34,10 @@ public static class ProtectionManager
             throw new InvalidOperationException("已经存在解除申请。 ");
         }
 
-        int delayMinutes = Math.Clamp(config.UnlockDelayMinutes, 1, 30 * 24 * 60);
+        int delayMinutes = Math.Clamp(
+            config.UnlockDelayMinutes,
+            1,
+            UnlockDelayPolicy.MaximumDelayMinutes);
         config.UnlockRequestedAtUtc = nowUtc;
         config.UnlockAvailableAtUtc = nowUtc.AddMinutes(delayMinutes);
     }
@@ -47,6 +50,34 @@ public static class ProtectionManager
         }
 
         return availableAt - nowUtc;
+    }
+
+    public static bool ChangeUnlockDelay(AppConfig config, int newDelayMinutes, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        int clampedMinutes = Math.Clamp(newDelayMinutes, 1, UnlockDelayPolicy.MaximumDelayMinutes);
+        if (config.ProtectionLocked && clampedMinutes < config.UnlockDelayMinutes)
+        {
+            throw new InvalidOperationException("锁定期间只能延长冷静期，不能缩短。 ");
+        }
+
+        config.UnlockDelayMinutes = clampedMinutes;
+        if (config.UnlockAvailableAtUtc is not { } currentDeadline)
+        {
+            return false;
+        }
+
+        // 已提交解除申请时，延长冷静期必须同步顺延当前截止时间，否则延长不生效。
+        // 旧配置可能没有记录申请时间，此时以当前时刻为锚点重新计时。
+        DateTimeOffset anchorUtc = config.UnlockRequestedAtUtc ?? nowUtc;
+        DateTimeOffset newDeadline = anchorUtc.AddMinutes(clampedMinutes);
+        if (newDeadline <= currentDeadline)
+        {
+            return false;
+        }
+
+        config.UnlockAvailableAtUtc = newDeadline;
+        return true;
     }
 
     public static void CompleteUnlock(AppConfig config, DateTimeOffset nowUtc)

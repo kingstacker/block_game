@@ -45,7 +45,7 @@ internal sealed class BrowserDnsPolicyManager
         _paths = paths;
     }
 
-    public void Apply(IReadOnlyCollection<string> domains)
+    public int Apply(IReadOnlyCollection<string> domains)
     {
         _paths.EnsureDirectory();
         if (!File.Exists(_paths.BrowserDnsPolicyBackupFile))
@@ -67,7 +67,7 @@ internal sealed class BrowserDnsPolicyManager
             key.SetValue(target.ValueName, target.AppliedValue, target.Kind);
         }
 
-        ApplyUrlBlocklists(domains);
+        return ApplyUrlBlocklists(domains);
     }
 
     public void Restore()
@@ -79,10 +79,20 @@ internal sealed class BrowserDnsPolicyManager
             return;
         }
 
-        BrowserDnsPolicyBackup backup = JsonSerializer.Deserialize<BrowserDnsPolicyBackup>(
-                File.ReadAllText(_paths.BrowserDnsPolicyBackupFile),
-                JsonDefaults.Create())
-            ?? new BrowserDnsPolicyBackup();
+        BrowserDnsPolicyBackup backup;
+        try
+        {
+            backup = JsonSerializer.Deserialize<BrowserDnsPolicyBackup>(
+                    File.ReadAllText(_paths.BrowserDnsPolicyBackupFile),
+                    JsonDefaults.Create())
+                ?? new BrowserDnsPolicyBackup();
+        }
+        catch (JsonException)
+        {
+            // 备份文件损坏时无法得知原始值；删除备份避免每次恢复都在同一处失败。
+            File.Delete(_paths.BrowserDnsPolicyBackupFile);
+            return;
+        }
 
         foreach (PolicyValueBackup saved in backup.Values)
         {
@@ -122,7 +132,7 @@ internal sealed class BrowserDnsPolicyManager
         File.Delete(_paths.BrowserDnsPolicyBackupFile);
     }
 
-    private void ApplyUrlBlocklists(IReadOnlyCollection<string> domains)
+    private int ApplyUrlBlocklists(IReadOnlyCollection<string> domains)
     {
         RestoreUrlBlocklists();
 
@@ -134,10 +144,11 @@ internal sealed class BrowserDnsPolicyManager
             .ToArray();
         if (filters.Length == 0)
         {
-            return;
+            return 0;
         }
 
         var state = new BrowserUrlBlockPolicyState();
+        var skippedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string keyPath in UrlBlocklistKeyPaths)
         {
             using RegistryKey key = Registry.LocalMachine.CreateSubKey(keyPath, writable: true)
@@ -146,8 +157,9 @@ internal sealed class BrowserDnsPolicyManager
             var occupiedNames = key.GetValueNames()
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             int nextValueNumber = 1;
-            foreach (string filter in filters)
+            for (int index = 0; index < filters.Length; index++)
             {
+                string filter = filters[index];
                 while (occupiedNames.Contains(nextValueNumber.ToString()))
                 {
                     nextValueNumber++;
@@ -155,8 +167,14 @@ internal sealed class BrowserDnsPolicyManager
 
                 if (nextValueNumber > MaximumUrlBlocklistEntries)
                 {
-                    throw new InvalidOperationException(
-                        $"浏览器网址拦截策略 {keyPath} 已超过 {MaximumUrlBlocklistEntries} 条限制。");
+                    // 浏览器策略名额用完不能让整个网站同步失败：剩余域名仍由
+                    // NRPT 和本机DNS拦截兜底，这里只记录被跳过的数量。
+                    for (int skipped = index; skipped < filters.Length; skipped++)
+                    {
+                        skippedDomains.Add(filters[skipped]);
+                    }
+
+                    break;
                 }
 
                 string valueName = nextValueNumber.ToString();
@@ -184,6 +202,8 @@ internal sealed class BrowserDnsPolicyManager
                     $"无法创建浏览器网址拦截策略注册表项 {entry.KeyPath}。");
             key.SetValue(entry.ValueName, entry.AppliedValue, RegistryValueKind.String);
         }
+
+        return skippedDomains.Count;
     }
 
     private void RestoreUrlBlocklists()
@@ -193,10 +213,21 @@ internal sealed class BrowserDnsPolicyManager
             return;
         }
 
-        BrowserUrlBlockPolicyState state = JsonSerializer.Deserialize<BrowserUrlBlockPolicyState>(
-                File.ReadAllText(_paths.BrowserUrlBlockPolicyStateFile),
-                JsonDefaults.Create())
-            ?? new BrowserUrlBlockPolicyState();
+        BrowserUrlBlockPolicyState state;
+        try
+        {
+            state = JsonSerializer.Deserialize<BrowserUrlBlockPolicyState>(
+                    File.ReadAllText(_paths.BrowserUrlBlockPolicyStateFile),
+                    JsonDefaults.Create())
+                ?? new BrowserUrlBlockPolicyState();
+        }
+        catch (JsonException)
+        {
+            // 状态文件损坏时无法得知此前写入的条目；删除文件避免每次同步都卡在这里。
+            File.Delete(_paths.BrowserUrlBlockPolicyStateFile);
+            return;
+        }
+
         foreach (BrowserUrlBlockPolicyEntry entry in state.Entries)
         {
             using RegistryKey? key = Registry.LocalMachine.OpenSubKey(

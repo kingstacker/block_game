@@ -29,7 +29,10 @@ if (Test-Path -LiteralPath $publishRoot) {
 }
 
 if ($SelfContained) {
-    dotnet restore (Join-Path $repoRoot 'BlockGame.sln') -r win-x64 --configfile (Join-Path $repoRoot 'NuGet.Config')
+    dotnet restore (Join-Path $repoRoot 'BlockGame.sln') `
+        -r win-x64 `
+        --configfile (Join-Path $repoRoot 'NuGet.Config') `
+        --source 'https://api.nuget.org/v3/index.json'
 } else {
     dotnet restore (Join-Path $repoRoot 'BlockGame.sln') --configfile (Join-Path $repoRoot 'NuGet.Config')
 }
@@ -52,6 +55,8 @@ dotnet publish (Join-Path $repoRoot 'src\BlockGame.Guard\BlockGame.Guard.csproj'
 if ($LASTEXITCODE -ne 0) { throw 'Guard publish failed.' }
 dotnet publish (Join-Path $repoRoot 'src\BlockGame.App\BlockGame.App.csproj') @commonArguments -o (Join-Path $publishRoot 'app')
 if ($LASTEXITCODE -ne 0) { throw 'App publish failed.' }
+dotnet publish (Join-Path $repoRoot 'src\BlockGame.Uninstall\BlockGame.Uninstall.csproj') @commonArguments -o (Join-Path $publishRoot 'uninstall')
+if ($LASTEXITCODE -ne 0) { throw 'Uninstaller publish failed.' }
 
 New-Item -ItemType Directory -Force -Path $publishRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall-installed.ps1') -Destination (Join-Path $publishRoot 'uninstall-installed.ps1') -Force

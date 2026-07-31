@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Windows;
@@ -23,6 +24,7 @@ public partial class MainWindow : Window
     private readonly Queue<string> _pendingBlockNotifications = new();
     private readonly DispatcherTimer _statusTimer;
     private bool _showingBlockNotification;
+    private string? _lastAuditChangeToken;
     private AppConfig _config;
 
     public MainWindow(
@@ -89,7 +91,7 @@ public partial class MainWindow : Window
             TimeSpan remaining = availableAt - nowUtc;
             UnlockStatusText.Text = remaining > TimeSpan.Zero
                 ? $"解除申请已提交。剩余 {FormatDuration(remaining)}，到期后还需再次输入密码。"
-                : "冷静期已经结束，可以点击“完成解除”。拦截不会自动暂停。";
+                : "冷静期已经结束，点击“完成解除”并输入管理密码即可解锁。拦截不会自动暂停。";
         }
         else if (_config.ProtectionLocked)
         {
@@ -107,9 +109,9 @@ public partial class MainWindow : Window
             && unlockAt <= nowUtc;
         DisableProtectionButton.IsEnabled = !_config.ProtectionLocked && _config.ProtectionEnabled;
 
-        if (!UnlockDelayHoursTextBox.IsKeyboardFocused)
+        if (!UnlockDelayValueTextBox.IsKeyboardFocused)
         {
-            UnlockDelayHoursTextBox.Text = (_config.UnlockDelayMinutes / 60d).ToString("0.##", CultureInfo.CurrentCulture);
+            RefreshUnlockDelayInput();
         }
     }
 
@@ -125,9 +127,38 @@ public partial class MainWindow : Window
         RefreshStatus(reloadConfig: false);
     }
 
-    private void RefreshLogs(bool notifyNewBlocks = true)
+    private void RefreshLogs(bool notifyNewBlocks = true, bool forceReload = false)
     {
-        IReadOnlyList<AuditEntry> entries = _auditLog.ReadRecent();
+        // 审计文件可能长时间不变；每秒重读全量日志毫无必要，未变化时直接跳过。
+        string changeToken = _auditLog.GetChangeToken();
+        if (!forceReload
+            && string.Equals(changeToken, _lastAuditChangeToken, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        AuditSnapshot snapshot = _auditLog.ReadSnapshot();
+        // 文件存在却读到空快照说明本次读取失败，不记录标记，下一秒重试。
+        bool likelyReadFailure = snapshot.Entries.Count == 0
+            && (File.Exists(_paths.AuditFile) || File.Exists(_paths.AuditArchiveFile));
+        _lastAuditChangeToken = likelyReadFailure ? null : changeToken;
+
+        IReadOnlyList<AuditEntry> entries = snapshot.Entries;
+        BlockedCountText.Text =
+            $"{snapshot.TotalBlockedCount.ToString(CultureInfo.InvariantCulture)} 次";
+        AuditEntry[] recentBlocks = entries
+            .Where(entry =>
+                entry.Success
+                && entry.EventType is "ProcessBlocked" or "WebsiteBlocked")
+            .Take(3)
+            .ToArray();
+        RecentBlockedContentText.Text = recentBlocks.Length == 0
+            ? "暂无拦截记录"
+            : string.Join(
+                Environment.NewLine,
+                recentBlocks.Select(entry =>
+                    $"{entry.TimestampUtc.ToLocalTime():MM-dd HH:mm:ss} · {entry.Message}"));
+
         _auditRows.Clear();
         foreach (AuditEntry entry in entries)
         {
@@ -237,12 +268,18 @@ public partial class MainWindow : Window
 
     private void CompleteUnlockButton_Click(object sender, RoutedEventArgs e)
     {
-        ReloadConfig();
+        // 界面承诺“冷静期到期后还需再次输入密码”，这里必须真正验证密码。
+        if (!AuthenticateForAction("完成解除锁定"))
+        {
+            RefreshStatus(reloadConfig: false);
+            return;
+        }
+
         try
         {
             ProtectionManager.CompleteUnlock(_config, DateTimeOffset.UtcNow);
             _configStore.Save(_config);
-            AppendAudit("ProtectionUnlocked", "冷静期结束，设置已解除锁定；拦截仍保持启用。", true);
+            AppendAudit("ProtectionUnlocked", "冷静期结束且密码验证通过，设置已解除锁定；拦截仍保持启用。", true);
             RefreshRules();
         }
         catch (InvalidOperationException exception)
@@ -296,7 +333,7 @@ public partial class MainWindow : Window
         {
             RuleTarget.FullPath => "匹配内容（完整 EXE 路径，支持 * 和 ?）",
             RuleTarget.Domain => "网站域名（可一行一个或用 ; 分隔；poki.com 会同时屏蔽其子域名）",
-            _ => "匹配内容（可一行一个或用 ; 分隔，支持 * 和 ?，自动补 .exe）"
+            _ => "匹配文件名、内部产品名或文件描述（可一行一个或用 ; 分隔，支持 * 和 ?，自动补 .exe）"
         };
         BrowseExeButton.IsEnabled = target != RuleTarget.Domain;
     }
@@ -341,6 +378,130 @@ public partial class MainWindow : Window
         RuleNameTextBox.Clear();
         RulePatternTextBox.Clear();
         RefreshRules();
+    }
+
+    private void ExportRulesButton_Click(object sender, RoutedEventArgs e)
+    {
+        ReloadConfig();
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出 BlockGame 规则",
+            Filter = "BlockGame 规则文件 (*.json)|*.json",
+            DefaultExt = ".json",
+            AddExtension = true,
+            FileName = $"BlockGame-rules-{DateTime.Now:yyyyMMdd-HHmmss}.json"
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            string json = RuleTransferService.Export(_config.Rules);
+            File.WriteAllText(dialog.FileName, json);
+            AppendAudit(
+                "RulesExported",
+                $"已导出 {_config.Rules.Count} 条规则。",
+                true);
+            MessageBox.Show(
+                $"已导出 {_config.Rules.Count} 条规则：\n\n{dialog.FileName}",
+                "BlockGame",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(
+                "导出规则失败：\n\n" + exception.Message,
+                "BlockGame",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private void ImportRulesButton_Click(object sender, RoutedEventArgs e)
+    {
+        ReloadConfig();
+        if (_config.ProtectionLocked)
+        {
+            MessageBox.Show(
+                "锁定期间不能导入规则。请先完成解除流程。",
+                "BlockGame",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "导入 BlockGame 规则",
+            Filter = "BlockGame 规则文件 (*.json)|*.json|所有文件 (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var file = new FileInfo(dialog.FileName);
+            if (file.Length > 5 * 1024 * 1024)
+            {
+                throw new InvalidDataException("规则文件不能超过 5 MB。 ");
+            }
+
+            IReadOnlyList<BlockRule> imported = RuleTransferService.Import(
+                File.ReadAllText(dialog.FileName));
+            int added = 0;
+            int skipped = 0;
+            foreach (BlockRule rule in imported)
+            {
+                bool duplicate = _config.Rules.Any(existing =>
+                    existing.Target == rule.Target
+                    && string.Equals(
+                        existing.Pattern,
+                        rule.Pattern,
+                        StringComparison.OrdinalIgnoreCase));
+                if (duplicate)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                _config.Rules.Add(rule);
+                added++;
+            }
+
+            if (added > 0)
+            {
+                _configStore.Save(_config);
+            }
+            AppendAudit(
+                "RulesImported",
+                $"规则导入完成：新增 {added} 条，跳过重复 {skipped} 条。",
+                true);
+            RefreshRules();
+            MessageBox.Show(
+                $"导入完成：新增 {added} 条，跳过重复 {skipped} 条。",
+                "BlockGame",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException)
+        {
+            MessageBox.Show(
+                "导入规则失败：\n\n" + exception.Message,
+                "BlockGame",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 
     private void DebugResetButton_Click(object sender, RoutedEventArgs e) => RunDebugReset();
@@ -564,28 +725,71 @@ public partial class MainWindow : Window
     {
         ReloadConfig();
         if (!double.TryParse(
-                UnlockDelayHoursTextBox.Text,
+                UnlockDelayValueTextBox.Text,
                 NumberStyles.Number,
                 CultureInfo.CurrentCulture,
-                out double hours)
-            || hours < (1d / 60d)
-            || hours > 24d * 30d)
+                out double value)
+            || !UnlockDelayPolicy.TryConvertToMinutes(
+                value,
+                GetSelectedUnlockDelayUnit(),
+                out int newMinutes))
         {
-            MessageBox.Show("冷静期必须在 1 分钟到 30 天之间。", "BlockGame", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("冷静期必须在 1 分钟到 12 个月之间。", "BlockGame", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        int newMinutes = Math.Max(1, (int)Math.Round(hours * 60d));
         if (_config.ProtectionLocked && newMinutes < _config.UnlockDelayMinutes)
         {
             MessageBox.Show("锁定期间只能延长冷静期，不能缩短。", "BlockGame", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        _config.UnlockDelayMinutes = newMinutes;
-        _configStore.Save(_config);
-        AppendAudit("UnlockDelayChanged", $"冷静期已改为 {FormatDuration(TimeSpan.FromMinutes(newMinutes))}。", true);
-        RefreshStatus(reloadConfig: false);
+        try
+        {
+            bool deadlineExtended = ProtectionManager.ChangeUnlockDelay(
+                _config,
+                newMinutes,
+                DateTimeOffset.UtcNow);
+            _configStore.Save(_config);
+            AppendAudit(
+                "UnlockDelayChanged",
+                $"冷静期已改为 {FormatDuration(TimeSpan.FromMinutes(newMinutes))}。"
+                    + (deadlineExtended ? "当前解除申请的截止时间已同步顺延。" : string.Empty),
+                true);
+            RefreshStatus(reloadConfig: false);
+        }
+        catch (InvalidOperationException exception)
+        {
+            MessageBox.Show(exception.Message, "BlockGame", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void UnlockDelayUnitComboBox_SelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (UnlockDelayValueTextBox is not null)
+        {
+            RefreshUnlockDelayInput();
+        }
+    }
+
+    private UnlockDelayUnit GetSelectedUnlockDelayUnit()
+    {
+        var selected = UnlockDelayUnitComboBox.SelectedItem as ComboBoxItem;
+        return Enum.TryParse(selected?.Tag?.ToString(), out UnlockDelayUnit unit)
+            ? unit
+            : UnlockDelayUnit.Hours;
+    }
+
+    private void RefreshUnlockDelayInput()
+    {
+        double value = UnlockDelayPolicy.ConvertFromMinutes(
+            _config.UnlockDelayMinutes,
+            GetSelectedUnlockDelayUnit());
+        UnlockDelayValueTextBox.Text = value.ToString(
+            "0.######",
+            CultureInfo.CurrentCulture);
     }
 
     private void ChangePasswordButton_Click(object sender, RoutedEventArgs e)
@@ -619,27 +823,28 @@ public partial class MainWindow : Window
         }
     }
 
-    private void AuthorizeUninstallButton_Click(object sender, RoutedEventArgs e)
+    private void OpenUninstallerButton_Click(object sender, RoutedEventArgs e)
     {
-        ReloadConfig();
-        if (_config.ProtectionLocked)
+        string uninstallerPath = Path.Combine(AppContext.BaseDirectory, "BlockGame.Uninstall.exe");
+        if (!File.Exists(uninstallerPath))
         {
-            MessageBox.Show("必须先申请并完成解除，才能生成卸载授权。", "BlockGame", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(
+                "找不到独立卸载程序，请使用最新安装包修复或覆盖安装后再试。",
+                "卸载 BlockGame",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
             return;
         }
 
-        string token = UninstallAuthorizationService.Create(_config, DateTimeOffset.UtcNow);
-        _configStore.Save(_config);
-        File.WriteAllText(_paths.UninstallTokenFile, token);
-        AppendAudit("UninstallAuthorized", "已生成十分钟有效的一次性卸载授权。", true);
-        MessageBox.Show(
-            "卸载授权已生成，十分钟内从 Windows“已安装的应用”执行卸载。令牌只能使用一次。",
-            "卸载授权",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = uninstallerPath,
+            UseShellExecute = true
+        });
     }
 
-    private void RefreshLogsButton_Click(object sender, RoutedEventArgs e) => RefreshLogs(notifyNewBlocks: true);
+    private void RefreshLogsButton_Click(object sender, RoutedEventArgs e)
+        => RefreshLogs(notifyNewBlocks: true, forceReload: true);
 
     private void ReloadConfig() => _config = _configStore.Load();
 
@@ -733,6 +938,14 @@ public partial class MainWindow : Window
     private static string FormatDuration(TimeSpan duration)
     {
         duration = duration < TimeSpan.Zero ? TimeSpan.Zero : duration;
+        if (duration.TotalDays >= 30)
+        {
+            int totalDays = (int)duration.TotalDays;
+            int months = totalDays / 30;
+            int days = totalDays % 30;
+            return $"{months} 个月 {days} 天 {duration.Hours} 小时 {duration.Minutes} 分钟";
+        }
+
         if (duration.TotalDays >= 1)
         {
             return $"{(int)duration.TotalDays} 天 {duration.Hours} 小时 {duration.Minutes} 分钟";

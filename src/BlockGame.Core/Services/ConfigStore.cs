@@ -5,6 +5,9 @@ namespace BlockGame.Core.Services;
 
 public sealed class ConfigStore
 {
+    private const string CrossProcessMutexName = @"Global\BlockGame.ConfigStore.Lock";
+    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(5);
+
     private readonly DataPaths _paths;
     private readonly JsonSerializerOptions _jsonOptions = JsonDefaults.Create(indented: true);
 
@@ -15,6 +18,9 @@ public sealed class ConfigStore
 
     public AppConfig Load()
     {
+        using CrossProcessLock configLock = CrossProcessLock.Acquire(
+            CrossProcessMutexName,
+            LockTimeout);
         _paths.EnsureDirectory();
         if (!File.Exists(_paths.ConfigFile))
         {
@@ -39,6 +45,9 @@ public sealed class ConfigStore
     public void Save(AppConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
+        using CrossProcessLock configLock = CrossProcessLock.Acquire(
+            CrossProcessMutexName,
+            LockTimeout);
         _paths.EnsureDirectory();
         config.SchemaVersion = AppConfig.CurrentSchemaVersion;
 

@@ -14,25 +14,19 @@ public static class RuleMatcher
             return null;
         }
 
-        string normalizedFileName = SafetyPolicy.NormalizeFileName(process.FileName);
+        IReadOnlyList<string> fileNameCandidates = BuildFileNameCandidates(process);
         foreach (BlockRule rule in config.Rules.Where(candidate => candidate.Enabled))
         {
-            string? candidate = rule.Target switch
+            bool matched = rule.Target switch
             {
-                RuleTarget.FileName => normalizedFileName,
-                RuleTarget.FullPath => process.FullPath,
-                _ => null
+                RuleTarget.FileName => SafetyPolicy.SplitFileNamePatterns(rule.Pattern)
+                    .Any(pattern => fileNameCandidates.Any(
+                        candidate => WildcardMatcher.IsMatch(candidate, pattern))),
+                RuleTarget.FullPath when process.FullPath is not null =>
+                    WildcardMatcher.IsMatch(process.FullPath, rule.Pattern),
+                _ => false
             };
 
-            if (candidate is null)
-            {
-                continue;
-            }
-
-            bool matched = rule.Target == RuleTarget.FileName
-                ? SafetyPolicy.SplitFileNamePatterns(rule.Pattern)
-                    .Any(pattern => WildcardMatcher.IsMatch(candidate, pattern))
-                : WildcardMatcher.IsMatch(candidate, rule.Pattern);
             if (matched)
             {
                 return new RuleMatch(rule, process);
@@ -40,5 +34,24 @@ public static class RuleMatcher
         }
 
         return null;
+    }
+
+    private static IReadOnlyList<string> BuildFileNameCandidates(ProcessDescriptor process)
+    {
+        var candidates = new List<string>
+        {
+            SafetyPolicy.NormalizeFileName(process.FileName)
+        };
+        AddDisplayNameCandidate(candidates, process.ProductName);
+        AddDisplayNameCandidate(candidates, process.FileDescription);
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static void AddDisplayNameCandidate(List<string> candidates, string? displayName)
+    {
+        if (!string.IsNullOrWhiteSpace(displayName))
+        {
+            candidates.Add(SafetyPolicy.NormalizeFileName(displayName));
+        }
     }
 }

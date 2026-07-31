@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\BlockGame.Core\BlockGame.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\BlockGame.App\Assets\BlockGame.ico</ApplicationIcon>
+    <AssemblyName>BlockGame.Uninstall</AssemblyName>
+    <RootNamespace>BlockGame.Uninstall</RootNamespace>
+  </PropertyGroup>
+
+</Project>

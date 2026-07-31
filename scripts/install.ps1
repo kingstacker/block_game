@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$PublishRoot = ''
+    [string]$PublishRoot = '',
+    [string]$Version = '0.1.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,6 +50,10 @@ if (-not (Test-IsAdministrator)) {
     throw 'Run install.ps1 from an elevated PowerShell window.'
 }
 
+if ($Version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
+    throw "Invalid version: $Version"
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if ([string]::IsNullOrWhiteSpace($PublishRoot)) {
     $PublishRoot = Join-Path $repoRoot 'artifacts\publish'
@@ -57,21 +62,28 @@ $PublishRoot = (Resolve-Path -LiteralPath $PublishRoot).Path
 
 $guardSource = Join-Path $PublishRoot 'guard'
 $appSource = Join-Path $PublishRoot 'app'
+$uninstallerSource = Join-Path $PublishRoot 'uninstall'
 $guardBinary = Join-Path $guardSource 'BlockGame.Guard.exe'
 $appBinary = Join-Path $appSource 'BlockGame.App.exe'
+$uninstallerBinary = Join-Path $uninstallerSource 'BlockGame.Uninstall.exe'
 $guardCore = Join-Path $guardSource 'BlockGame.Core.dll'
 $appCore = Join-Path $appSource 'BlockGame.Core.dll'
+$uninstallerCore = Join-Path $uninstallerSource 'BlockGame.Core.dll'
 if (-not (Test-Path -LiteralPath $guardBinary) -or
     -not (Test-Path -LiteralPath $appBinary) -or
+    -not (Test-Path -LiteralPath $uninstallerBinary) -or
     -not (Test-Path -LiteralPath $guardCore) -or
-    -not (Test-Path -LiteralPath $appCore)) {
+    -not (Test-Path -LiteralPath $appCore) -or
+    -not (Test-Path -LiteralPath $uninstallerCore)) {
     throw "Publish files not found. Run scripts\build.ps1 first: $PublishRoot"
 }
 
 $guardCoreHash = (Get-FileHash -LiteralPath $guardCore -Algorithm SHA256).Hash
 $appCoreHash = (Get-FileHash -LiteralPath $appCore -Algorithm SHA256).Hash
-if (-not [string]::Equals($guardCoreHash, $appCoreHash, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'App and guard publish outputs contain different BlockGame.Core.dll files. Rebuild before installing.'
+$uninstallerCoreHash = (Get-FileHash -LiteralPath $uninstallerCore -Algorithm SHA256).Hash
+if (-not [string]::Equals($guardCoreHash, $appCoreHash, [StringComparison]::OrdinalIgnoreCase) -or
+    -not [string]::Equals($appCoreHash, $uninstallerCoreHash, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'App, guard, and uninstaller outputs contain different BlockGame.Core.dll files. Rebuild before installing.'
 }
 
 $installDir = Join-Path ${env:ProgramFiles} 'BlockGame'
@@ -83,6 +95,8 @@ $serviceName = 'BlockGameGuard'
 # The WPF control panel loads BlockGame.Core.dll from the installation directory.
 # Stop it before copying so Windows cannot leave the new app beside an old loaded core assembly.
 Get-Process -Name 'BlockGame.App' -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction Stop
+Get-Process -Name 'BlockGame.Uninstall' -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction Stop
 
 if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
@@ -101,12 +115,14 @@ if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
 New-Item -ItemType Directory -Force -Path $installDir, $dataDir | Out-Null
 Copy-PublishFiles -SourceDirectory $guardSource -DestinationDirectory $installDir
 Copy-PublishFiles -SourceDirectory $appSource -DestinationDirectory $installDir
+Copy-PublishFiles -SourceDirectory $uninstallerSource -DestinationDirectory $installDir
 
-# Both executables load this shared assembly from the installation directory.
+# All executables load this shared assembly from the installation directory.
 # Copy it explicitly last and verify it so a mixed-version install cannot appear successful.
 Copy-Item -LiteralPath $appCore -Destination (Join-Path $installDir 'BlockGame.Core.dll') -Force
 Assert-FilesMatch -Expected $appBinary -Actual (Join-Path $installDir 'BlockGame.App.exe')
 Assert-FilesMatch -Expected $guardBinary -Actual (Join-Path $installDir 'BlockGame.Guard.exe')
+Assert-FilesMatch -Expected $uninstallerBinary -Actual (Join-Path $installDir 'BlockGame.Uninstall.exe')
 Assert-FilesMatch -Expected $appCore -Actual (Join-Path $installDir 'BlockGame.Core.dll')
 
 Copy-Item -LiteralPath (Join-Path $PublishRoot 'uninstall-installed.ps1') -Destination $uninstallScript -Force
@@ -133,18 +149,39 @@ New-Service -Name $serviceName -BinaryPathName $binaryPath -DisplayName 'BlockGa
 $uninstallKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\BlockGame'
 New-Item -Path $uninstallKey -Force | Out-Null
 New-ItemProperty -Path $uninstallKey -Name DisplayName -Value 'BlockGame Self-Control Assistant' -PropertyType String -Force | Out-Null
-New-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value '0.1.0' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value $Version -PropertyType String -Force | Out-Null
 New-ItemProperty -Path $uninstallKey -Name Publisher -Value 'BlockGame' -PropertyType String -Force | Out-Null
 New-ItemProperty -Path $uninstallKey -Name InstallLocation -Value $installDir -PropertyType String -Force | Out-Null
-New-ItemProperty -Path $uninstallKey -Name UninstallString -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$uninstallScript`"" -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $uninstallKey -Name DisplayIcon -Value (Join-Path $installDir 'BlockGame.App.exe') -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $uninstallKey -Name NoModify -Value 1 -PropertyType DWord -Force | Out-Null
+New-ItemProperty -Path $uninstallKey -Name NoRepair -Value 1 -PropertyType DWord -Force | Out-Null
+New-ItemProperty -Path $uninstallKey -Name UninstallString -Value "`"$(Join-Path $installDir 'BlockGame.Uninstall.exe')`"" -PropertyType String -Force | Out-Null
 
 $startMenu = Join-Path ${env:ProgramData} 'Microsoft\Windows\Start Menu\Programs\BlockGame.lnk'
+$programsDirectory = Join-Path ${env:ProgramData} 'Microsoft\Windows\Start Menu\Programs'
+$uninstallShortcutName = (-join @([char]0x5378, [char]0x8F7D, ' BlockGame.lnk'))
+$uninstallStartMenu = Join-Path $programsDirectory $uninstallShortcutName
 $shell = New-Object -ComObject WScript.Shell
+
+# Remove only legacy BlockGame shortcuts that target this uninstaller. This also
+# cleans a filename created by older Windows PowerShell encoding behavior.
+Get-ChildItem -LiteralPath $programsDirectory -Filter '*BlockGame.lnk' -File -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.FullName -ne $uninstallStartMenu -and
+        $shell.CreateShortcut($_.FullName).TargetPath -eq (Join-Path $installDir 'BlockGame.Uninstall.exe')
+    } |
+    Remove-Item -Force
+
 $shortcut = $shell.CreateShortcut($startMenu)
 $shortcut.TargetPath = Join-Path $installDir 'BlockGame.App.exe'
 $shortcut.WorkingDirectory = $installDir
 $shortcut.Description = 'BlockGame Self-Control Assistant'
 $shortcut.Save()
+$uninstallShortcut = $shell.CreateShortcut($uninstallStartMenu)
+$uninstallShortcut.TargetPath = Join-Path $installDir 'BlockGame.Uninstall.exe'
+$uninstallShortcut.WorkingDirectory = $installDir
+$uninstallShortcut.Description = 'Uninstall BlockGame (management password required)'
+$uninstallShortcut.Save()
 
 Start-Service -Name $serviceName
 Write-Host "BlockGame installed."

@@ -25,11 +25,17 @@ public partial class PasswordSetupWindow : Window
             return;
         }
 
-        if (!double.TryParse(DelayHoursTextBox.Text, NumberStyles.Number, CultureInfo.CurrentCulture, out double hours)
-            || hours < (1d / 60d)
-            || hours > 24d * 30d)
+        if (!double.TryParse(
+                DelayHoursTextBox.Text,
+                NumberStyles.Number,
+                CultureInfo.CurrentCulture,
+                out double hours)
+            || !UnlockDelayPolicy.TryConvertToMinutes(
+                hours,
+                UnlockDelayUnit.Hours,
+                out int delayMinutes))
         {
-            MessageBox.Show("冷静期必须在 1 分钟到 30 天之间。", "首次设置", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("冷静期必须在 1 分钟到 12 个月之间。", "首次设置", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -38,7 +44,7 @@ public partial class PasswordSetupWindow : Window
             AppConfig config = _configStore.Load();
             config.Password = PasswordHasher.Create(PasswordBox.Password);
             config.PasswordThrottle = new PasswordThrottle();
-            config.UnlockDelayMinutes = Math.Max(1, (int)Math.Round(hours * 60d));
+            config.UnlockDelayMinutes = delayMinutes;
             config.SetupCompleted = true;
             config.ProtectionEnabled = false;
             config.ProtectionLocked = false;
