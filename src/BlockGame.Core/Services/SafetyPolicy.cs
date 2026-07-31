@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using BlockGame.Core.Models;
 
 namespace BlockGame.Core.Services;
@@ -5,8 +6,11 @@ namespace BlockGame.Core.Services;
 public static class SafetyPolicy
 {
     private const string OwnComponentPrefix = "blockgame.";
+    private const int MaximumPatternCacheEntries = 4096;
     private static readonly char[] WildcardCharacters = ['*', '?'];
     private static readonly string? OwnComponentDirectory = DetectOwnComponentDirectory();
+    private static readonly ConcurrentDictionary<string, IReadOnlyList<string>> SplitPatternCache =
+        new(StringComparer.Ordinal);
 
     private static readonly HashSet<string> ProtectedFileNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -246,14 +250,21 @@ public static class SafetyPolicy
             return [];
         }
 
-        return patterns
+        // 守护进程每 400ms 会对“每个进程 × 每条规则”调用一次；拆分含
+        // 分割、去重和补 .exe，必须按原始字符串缓存结果，避免高频重复解析。
+        if (SplitPatternCache.Count > MaximumPatternCacheEntries)
+        {
+            SplitPatternCache.Clear();
+        }
+
+        return SplitPatternCache.GetOrAdd(patterns, static value => value
             .Split(
                 [';', '；', '\r', '\n'],
                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(NormalizeSingleFileNamePattern)
             .Where(pattern => pattern.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            .ToArray());
     }
 
     public static bool NormalizeFileNameRulePatterns(AppConfig config)

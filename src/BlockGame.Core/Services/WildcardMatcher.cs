@@ -5,6 +5,7 @@ namespace BlockGame.Core.Services;
 
 public static class WildcardMatcher
 {
+    private const int MaximumCacheEntries = 4096;
     private static readonly ConcurrentDictionary<string, Regex> Cache = new(StringComparer.OrdinalIgnoreCase);
 
     public static bool IsMatch(string input, string pattern)
@@ -12,6 +13,11 @@ public static class WildcardMatcher
         if (string.IsNullOrWhiteSpace(input) || string.IsNullOrWhiteSpace(pattern))
         {
             return false;
+        }
+
+        if (Cache.Count > MaximumCacheEntries)
+        {
+            Cache.Clear();
         }
 
         Regex regex = Cache.GetOrAdd(pattern, static value =>
