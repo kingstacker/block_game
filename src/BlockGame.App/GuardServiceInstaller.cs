@@ -9,6 +9,8 @@ namespace BlockGame.App;
 
 internal sealed record GuardInstallResult(bool Success, bool InstalledNow, string Message);
 
+internal sealed record GuardHealthResult(bool Healthy, bool ActionTaken, string Message);
+
 internal static class GuardServiceInstaller
 {
     private const string ServiceName = "BlockGameGuard";
@@ -137,6 +139,54 @@ internal static class GuardServiceInstaller
         {
             return new GuardInstallResult(false, false, "自动安装后台服务失败：" + exception.Message);
         }
+    }
+
+    /// <summary>
+    /// 看门狗定时调用:确认后台守护服务仍然存在、运行,并守住恢复配置。
+    /// 被删除则重装,被停止则重启,恢复动作被清空则补刷。
+    /// </summary>
+    public static GuardHealthResult VerifyAndRepair(DataPaths paths)
+    {
+        ServiceLookup lookup = LookupService();
+        if (lookup.ErrorMessage is not null)
+        {
+            return new GuardHealthResult(false, false, lookup.ErrorMessage);
+        }
+
+        if (!lookup.Exists)
+        {
+            GuardInstallResult install = EnsureInstalled(paths);
+            return new GuardHealthResult(
+                install.Success,
+                true,
+                install.Success
+                    ? "检测到后台守护服务被移除，已自动重新安装并启动。 "
+                    : "自动修复后台守护服务失败：" + install.Message);
+        }
+
+        if (!ServicePointsToBlockGame())
+        {
+            return new GuardHealthResult(
+                false,
+                false,
+                "检测到同名的 BlockGameGuard 服务，但它不是当前程序创建的服务；为安全起见未修改它。 ");
+        }
+
+        // 无论服务是否在跑，都补刷一次恢复配置，防止它被 sc failure 清空。
+        ConfigureRecovery();
+
+        if (TryQueryServiceState(out int state) && state == ServiceRunning)
+        {
+            return new GuardHealthResult(true, false, "后台守护服务运行正常。 ");
+        }
+
+        bool started = TryStartService(out string startMessage);
+        return new GuardHealthResult(
+            started,
+            true,
+            started
+                ? "检测到后台守护服务已停止，已重新启动。 "
+                : "重新启动后台守护服务失败：" + startMessage);
     }
 
     public static bool TryCleanupNetworkPolicies(out string message)
@@ -339,8 +389,7 @@ internal static class GuardServiceInstaller
     }
 
     private static bool TryStartService(out string message)
-    {
-        nint manager = OpenSCManager(null, null, ScManagerConnect);
+    {        nint manager = OpenSCManager(null, null, ScManagerConnect);
         if (manager == nint.Zero)
         {
             message = "打开服务管理器失败：" + Marshal.GetLastWin32Error();
@@ -377,6 +426,44 @@ internal static class GuardServiceInstaller
 
                 message = "后台服务已启动。 ";
                 return true;
+            }
+            finally
+            {
+                CloseServiceHandle(service);
+            }
+        }
+        finally
+        {
+            CloseServiceHandle(manager);
+        }
+    }
+
+    private static bool TryQueryServiceState(out int state)
+    {
+        state = 0;
+        nint manager = OpenSCManager(null, null, ScManagerConnect);
+        if (manager == nint.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            nint service = OpenService(manager, ServiceName, ServiceQueryStatus);
+            if (service == nint.Zero)
+            {
+                return false;
+            }
+
+            try
+            {
+                if (QueryServiceStatus(service, out NativeServiceStatus status))
+                {
+                    state = status.CurrentState;
+                    return true;
+                }
+
+                return false;
             }
             finally
             {

@@ -10,6 +10,7 @@ internal sealed class GuardWorker
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan LegacyHostsCleanupRetryInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FailureLogInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan RecoveryReapplyInterval = TimeSpan.FromMinutes(5);
 
     private readonly DataPaths _paths;
     private readonly ConfigStore _configStore;
@@ -50,7 +51,9 @@ internal sealed class GuardWorker
         AppConfig lastKnownGoodConfig = LoadConfigOrDefault();
         DateTimeOffset nextHeartbeatUtc = DateTimeOffset.MinValue;
         DateTimeOffset nextLegacyHostsCleanupUtc = DateTimeOffset.MinValue;
+        DateTimeOffset nextRecoveryReapplyUtc = DateTimeOffset.MinValue;
         bool legacyHostsCleanupComplete = false;
+        bool isWindowsService = string.Equals(mode, "WindowsService", StringComparison.Ordinal);
 
         TryAudit(new AuditEntry
         {
@@ -97,6 +100,13 @@ internal sealed class GuardWorker
             {
                 WriteHeartbeat(mode, nowUtc);
                 nextHeartbeatUtc = nowUtc.Add(HeartbeatInterval);
+            }
+
+            if (isWindowsService && nowUtc >= nextRecoveryReapplyUtc)
+            {
+                // 只要服务在运行,就持续守住自己的恢复配置,不被 sc failure 清空。
+                ServiceRecoveryGuard.Reapply();
+                nextRecoveryReapplyUtc = nowUtc.Add(RecoveryReapplyInterval);
             }
 
             try

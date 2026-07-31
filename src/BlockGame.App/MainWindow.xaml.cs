@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -16,6 +17,7 @@ public partial class MainWindow : Window
 {
     private const int MaximumKnownBlockEvents = 10_000;
     private static readonly TimeSpan BlockNotificationCooldown = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan GuardHealthCheckInterval = TimeSpan.FromSeconds(30);
 
     private readonly DataPaths _paths;
     private readonly ConfigStore _configStore;
@@ -30,6 +32,9 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _statusTimer;
     private bool _showingBlockNotification;
     private string? _lastAuditChangeToken;
+    private DateTimeOffset _nextGuardHealthCheckUtc = DateTimeOffset.MinValue;
+    private bool _guardHealthCheckRunning;
+    private string? _lastGuardWatchdogAuditMessage;
     private AppConfig _config;
 
     public MainWindow(
@@ -57,6 +62,7 @@ public partial class MainWindow : Window
         {
             RefreshStatus(reloadConfig: true);
             RefreshLogs(notifyNewBlocks: true);
+            CheckGuardHealth();
         };
         _statusTimer.Start();
 
@@ -928,6 +934,57 @@ public partial class MainWindow : Window
         => RefreshLogs(notifyNewBlocks: true, forceReload: true);
 
     private void ReloadConfig() => _config = _configStore.Load();
+
+    /// <summary>
+    /// 控制面板常驻托盘时的看门狗:守护服务被删除则重装,被停止则拉起,
+    /// 并顺带守住服务恢复配置。检查放到后台线程,避免每 30 秒的 sc.exe 调用卡界面。
+    /// </summary>
+    private void CheckGuardHealth()
+    {
+        if (_guardHealthCheckRunning)
+        {
+            return;
+        }
+
+        DateTimeOffset nowUtc = DateTimeOffset.UtcNow;
+        if (nowUtc < _nextGuardHealthCheckUtc)
+        {
+            return;
+        }
+
+        _nextGuardHealthCheckUtc = nowUtc.Add(GuardHealthCheckInterval);
+        _guardHealthCheckRunning = true;
+        Task.Run(() => GuardServiceInstaller.VerifyAndRepair(_paths))
+            .ContinueWith(
+                task =>
+                {
+                    _guardHealthCheckRunning = false;
+                    if (!task.IsCompletedSuccessfully)
+                    {
+                        return;
+                    }
+
+                    GuardHealthResult result = task.Result;
+                    if (result.Healthy && !result.ActionTaken)
+                    {
+                        // 一切正常:不写审计,并清空去重记忆,让下次真正的故障能重新记录。
+                        _lastGuardWatchdogAuditMessage = null;
+                        return;
+                    }
+
+                    if (string.Equals(
+                            result.Message,
+                            _lastGuardWatchdogAuditMessage,
+                            StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    _lastGuardWatchdogAuditMessage = result.Message;
+                    AppendAudit("GuardWatchdog", result.Message, result.Healthy);
+                },
+                TaskScheduler.FromCurrentSynchronizationContext());
+    }
 
     private void AppendAudit(string eventType, string message, bool success)
     {
