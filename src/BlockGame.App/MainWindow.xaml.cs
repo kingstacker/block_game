@@ -14,6 +14,9 @@ namespace BlockGame.App;
 
 public partial class MainWindow : Window
 {
+    private const int MaximumKnownBlockEvents = 10_000;
+    private static readonly TimeSpan BlockNotificationCooldown = TimeSpan.FromSeconds(60);
+
     private readonly DataPaths _paths;
     private readonly ConfigStore _configStore;
     private readonly AuditLog _auditLog;
@@ -22,6 +25,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<AuditRow> _auditRows = [];
     private readonly HashSet<string> _knownBlockEvents = new(StringComparer.Ordinal);
     private readonly Queue<string> _pendingBlockNotifications = new();
+    private readonly Dictionary<string, DateTimeOffset> _recentBlockNotificationTimes =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _statusTimer;
     private bool _showingBlockNotification;
     private string? _lastAuditChangeToken;
@@ -159,10 +164,13 @@ public partial class MainWindow : Window
                 recentBlocks.Select(entry =>
                     $"{entry.TimestampUtc.ToLocalTime():MM-dd HH:mm:ss} · {entry.Message}"));
 
-        _auditRows.Clear();
-        foreach (AuditEntry entry in entries)
+        UpdateAuditRows(entries);
+
+        if (_knownBlockEvents.Count > MaximumKnownBlockEvents)
         {
-            _auditRows.Add(new AuditRow(entry));
+            // 长期运行的防膨胀：清空已知事件集，本轮只重新登记、不重复弹窗。
+            _knownBlockEvents.Clear();
+            notifyNewBlocks = false;
         }
 
         var newBlockNames = new List<string>();
@@ -184,12 +192,85 @@ public partial class MainWindow : Window
                 : $"{GetBlockedApplicationName(entry)} 软件已被拦截。");
         }
 
+        DateTimeOffset notificationNowUtc = DateTimeOffset.UtcNow;
         foreach (string message in newBlockNames.Distinct(StringComparer.OrdinalIgnoreCase))
         {
+            // 被拦截的程序反复自启会不断产生新事件；同名提示 60 秒内只弹一次。
+            if (_recentBlockNotificationTimes.TryGetValue(message, out DateTimeOffset lastNotified)
+                && notificationNowUtc - lastNotified < BlockNotificationCooldown)
+            {
+                continue;
+            }
+
+            _recentBlockNotificationTimes[message] = notificationNowUtc;
             _pendingBlockNotifications.Enqueue(message);
         }
 
+        if (_recentBlockNotificationTimes.Count > 256)
+        {
+            foreach (string staleKey in _recentBlockNotificationTimes
+                         .Where(pair => notificationNowUtc - pair.Value >= BlockNotificationCooldown)
+                         .Select(pair => pair.Key)
+                         .ToArray())
+            {
+                _recentBlockNotificationTimes.Remove(staleKey);
+            }
+        }
+
         ShowPendingBlockNotifications();
+    }
+
+    /// <summary>
+    /// 审计事件只会追加在快照头部；拦截密集发生时按头部差量插入，
+    /// 避免每秒清空重建整张 DataGrid 造成界面抖动。
+    /// </summary>
+    private void UpdateAuditRows(IReadOnlyList<AuditEntry> entries)
+    {
+        if (_auditRows.Count == 0 || entries.Count == 0)
+        {
+            RebuildAuditRows(entries);
+            return;
+        }
+
+        string topSignature = _auditRows[0].Signature;
+        int newEntryCount = -1;
+        for (int index = 0; index < entries.Count; index++)
+        {
+            if (string.Equals(
+                    CreateAuditSignature(entries[index]),
+                    topSignature,
+                    StringComparison.Ordinal))
+            {
+                newEntryCount = index;
+                break;
+            }
+        }
+
+        if (newEntryCount < 0)
+        {
+            // 头部对不上（日志轮转边界等），退回整表重建。
+            RebuildAuditRows(entries);
+            return;
+        }
+
+        for (int index = newEntryCount - 1; index >= 0; index--)
+        {
+            _auditRows.Insert(0, new AuditRow(entries[index]));
+        }
+
+        while (_auditRows.Count > entries.Count)
+        {
+            _auditRows.RemoveAt(_auditRows.Count - 1);
+        }
+    }
+
+    private void RebuildAuditRows(IReadOnlyList<AuditEntry> entries)
+    {
+        _auditRows.Clear();
+        foreach (AuditEntry entry in entries)
+        {
+            _auditRows.Add(new AuditRow(entry));
+        }
     }
 
     public bool AuthenticateForOpen()
@@ -908,13 +989,30 @@ public partial class MainWindow : Window
         _showingBlockNotification = true;
         try
         {
-            while (_pendingBlockNotifications.TryDequeue(out string? message))
+            while (_pendingBlockNotifications.Count > 0)
             {
+                // 一次命中多个程序时合并成一个对话框，避免连环模态弹窗。
+                var messages = new List<string>();
+                while (_pendingBlockNotifications.TryDequeue(out string? message))
+                {
+                    messages.Add(message);
+                }
+
+                const int maximumLines = 8;
+                string text = messages.Count == 1
+                    ? messages[0]
+                    : "以下内容已被拦截：\n\n"
+                        + string.Join(
+                            "\n",
+                            messages.Take(maximumLines).Select(message => "· " + message))
+                        + (messages.Count > maximumLines
+                            ? $"\n· ……等共 {messages.Count} 项"
+                            : string.Empty);
                 if (IsVisible)
                 {
                     MessageBox.Show(
                         this,
-                        message,
+                        text,
                         "BlockGame 拦截提示",
                         MessageBoxButton.OK,
                         MessageBoxImage.Information);
@@ -922,7 +1020,7 @@ public partial class MainWindow : Window
                 else
                 {
                     MessageBox.Show(
-                        message,
+                        text,
                         "BlockGame 拦截提示",
                         MessageBoxButton.OK,
                         MessageBoxImage.Information);
@@ -989,6 +1087,7 @@ public partial class MainWindow : Window
     {
         public AuditRow(AuditEntry entry)
         {
+            Signature = CreateAuditSignature(entry);
             TimeDisplay = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
             EventType = entry.EventType switch
             {
@@ -1002,6 +1101,7 @@ public partial class MainWindow : Window
             Message = entry.Message;
         }
 
+        public string Signature { get; }
         public string TimeDisplay { get; }
         public string EventType { get; }
         public string ResultDisplay { get; }

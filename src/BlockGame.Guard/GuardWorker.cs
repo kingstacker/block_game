@@ -20,6 +20,8 @@ internal sealed class GuardWorker
     private readonly BrowserDnsPolicyManager _browserDnsPolicyManager;
     private readonly ExecutableMetadataResolver _metadataResolver = new();
     private readonly Dictionary<string, DateTimeOffset> _lastFailureLogs = new();
+    private readonly Dictionary<string, DateTimeOffset> _lastProcessBlockToasts = new(
+        StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTimeOffset> _lastWebsiteNotifications = new(
         StringComparer.OrdinalIgnoreCase);
     private readonly object _websiteNotificationLock = new();
@@ -457,7 +459,18 @@ internal sealed class GuardWorker
         try
         {
             process.Kill(entireProcessTree: true);
-            bool notificationSent = DesktopNotifier.TryShowBlocked(match.Process.FileName);
+            bool notificationSent;
+            if (ShouldShowProcessBlockToast(match.Process.FileName))
+            {
+                notificationSent = DesktopNotifier.TryShowBlocked(match.Process.FileName);
+            }
+            else
+            {
+                // 被拦截的程序反复自启时，30 秒内同名进程只发一次系统通知；
+                // 节流窗口内视为“已告知”，管理界面也不必再补弹窗。审计仍逐条记录。
+                notificationSent = true;
+            }
+
             TryAudit(new AuditEntry
             {
                 EventType = "ProcessBlocked",
@@ -477,6 +490,30 @@ internal sealed class GuardWorker
                 $"无法终止 {match.Process.FileName}：{exception.Message}",
                 match);
         }
+    }
+
+    private bool ShouldShowProcessBlockToast(string fileName)
+    {
+        DateTimeOffset nowUtc = DateTimeOffset.UtcNow;
+        if (_lastProcessBlockToasts.TryGetValue(fileName, out DateTimeOffset previous)
+            && nowUtc - previous < FailureLogInterval)
+        {
+            return false;
+        }
+
+        _lastProcessBlockToasts[fileName] = nowUtc;
+        if (_lastProcessBlockToasts.Count > 256)
+        {
+            foreach (string staleKey in _lastProcessBlockToasts
+                         .Where(pair => nowUtc - pair.Value >= FailureLogInterval)
+                         .Select(pair => pair.Key)
+                         .ToArray())
+            {
+                _lastProcessBlockToasts.Remove(staleKey);
+            }
+        }
+
+        return true;
     }
 
     private void WriteHeartbeat(string mode, DateTimeOffset nowUtc)
