@@ -1,6 +1,20 @@
-# BlockGame v0.1.1
+# BlockGame v0.1.2
 
 BlockGame 是一个面向 Windows 11 的自我约束工具。它通过后台守护程序监控进程启动，匹配规则后立即终止程序，并用管理密码、解除冷静期和一次性卸载令牌增加绕过阻力。
+
+## 界面预览
+
+主界面实时显示拦截状态、当前模式、设置锁和累计拦截情况：
+
+![程序主界面](screen/程序主界面.png)
+
+| 拦截规则 | 审计日志 |
+| :---: | :---: |
+| ![拦截规则界面](screen/拦截规则界面.png) | ![审计日志界面](screen/审计日志界面.png) |
+
+| 设置 | 拦截提示 |
+| :---: | :---: |
+| ![设置界面](screen/设置界面.png) | ![拦截提示](screen/拦截提示.png) |
 
 ## 当前版本包含
 
@@ -59,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 正式发布包默认包含 Windows x64 自带运行时版本，目标电脑无需另装 .NET：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 0.1.1
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 0.1.2
 ```
 
 构建完成后发布以下两个文件：
@@ -102,4 +116,4 @@ dotnet run --project .\tests\BlockGame.SelfTest\BlockGame.SelfTest.csproj
 
 ## 重要限制
 
-v0.1.1 使用高频进程监控，因此被拦截程序可能短暂出现；AppLocker / WDAC 的创建和签名策略将在后续版本加入。网站规则按域名生效，无法只屏蔽 URL 中的某个路径；企业域策略、VPN 或自带代理/解析器的软件可能优先使用自己的策略。拥有本机管理员权限的人仍可以进入安全模式、离线修改文件或重装系统。本项目不使用隐藏持久化、内核驱动或破坏系统的方式。
+v0.1.2 使用高频进程监控，因此被拦截程序可能短暂出现；AppLocker / WDAC 的创建和签名策略将在后续版本加入。网站规则按域名生效，无法只屏蔽 URL 中的某个路径；企业域策略、VPN 或自带代理/解析器的软件可能优先使用自己的策略。拥有本机管理员权限的人仍可以进入安全模式、离线修改文件或重装系统。本项目不使用隐藏持久化、内核驱动或破坏系统的方式。
