@@ -11,6 +11,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- The process is WPF; WinForms is referenced only for the tray icon. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\BlockGame.ico</ApplicationIcon>
     <AssemblyName>BlockGame.App</AssemblyName>

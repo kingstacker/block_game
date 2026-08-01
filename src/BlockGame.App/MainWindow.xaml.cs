@@ -19,6 +19,12 @@ namespace BlockGame.App;
 public partial class MainWindow : Window
 {
     private const int MaximumKnownBlockEvents = 10_000;
+    private const double PreferredMinimumWindowWidth = 900;
+    private const double PreferredMinimumWindowHeight = 620;
+    private const double MaximumAdaptiveWindowWidth = 1440;
+    private const double MaximumAdaptiveWindowHeight = 920;
+    private const double WorkAreaMargin = 32;
+    private const uint MonitorDefaultToNearest = 0x00000002;
     private static readonly TimeSpan BlockNotificationCooldown = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan GuardHealthCheckInterval = TimeSpan.FromSeconds(30);
 
@@ -57,6 +63,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         SourceInitialized += (_, _) =>
         {
+            ApplyAdaptiveWindowSize();
             _dropBridgeHost = new DropBridgeHost(
                 this,
                 ShortcutDropZone,
@@ -88,6 +95,85 @@ public partial class MainWindow : Window
         RefreshRules();
         RefreshLogs(notifyNewBlocks: false);
         RefreshStatus(reloadConfig: false);
+    }
+
+    private void ApplyAdaptiveWindowSize()
+    {
+        nint windowHandle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (windowHandle == 0)
+        {
+            return;
+        }
+
+        double availableWidth;
+        double availableHeight;
+        nint monitorHandle = MonitorFromWindow(windowHandle, MonitorDefaultToNearest);
+        var monitorInfo = new MonitorInfo
+        {
+            Size = (uint)Marshal.SizeOf<MonitorInfo>()
+        };
+        if (monitorHandle != 0 && GetMonitorInfo(monitorHandle, ref monitorInfo))
+        {
+            uint windowDpi = GetDpiForWindow(windowHandle);
+            double dpiScale = windowDpi > 0 ? windowDpi / 96d : 1d;
+            availableWidth = monitorInfo.WorkArea.Width / dpiScale;
+            availableHeight = monitorInfo.WorkArea.Height / dpiScale;
+        }
+        else
+        {
+            Rect workingArea = SystemParameters.WorkArea;
+            availableWidth = workingArea.Width;
+            availableHeight = workingArea.Height;
+        }
+
+        double widthLimit = Math.Max(640, availableWidth - WorkAreaMargin);
+        double heightLimit = Math.Max(480, availableHeight - WorkAreaMargin);
+        double effectiveMinimumWidth = Math.Min(PreferredMinimumWindowWidth, widthLimit);
+        double effectiveMinimumHeight = Math.Min(PreferredMinimumWindowHeight, heightLimit);
+        double effectiveMaximumWidth = Math.Min(MaximumAdaptiveWindowWidth, widthLimit);
+        double effectiveMaximumHeight = Math.Min(MaximumAdaptiveWindowHeight, heightLimit);
+
+        MinWidth = effectiveMinimumWidth;
+        MinHeight = effectiveMinimumHeight;
+        Width = Math.Clamp(
+            availableWidth * 0.82,
+            effectiveMinimumWidth,
+            effectiveMaximumWidth);
+        Height = Math.Clamp(
+            availableHeight * 0.84,
+            effectiveMinimumHeight,
+            effectiveMaximumHeight);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(nint windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern nint MonitorFromWindow(nint windowHandle, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(nint monitorHandle, ref MonitorInfo monitorInfo);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+
+        public readonly int Width => Right - Left;
+        public readonly int Height => Bottom - Top;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct MonitorInfo
+    {
+        public uint Size;
+        public NativeRect MonitorArea;
+        public NativeRect WorkArea;
+        public uint Flags;
     }
 
     private void RefreshStatus(bool reloadConfig)
