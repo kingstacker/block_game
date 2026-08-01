@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PublishRoot = '',
-    [string]$Version = '0.1.0'
+    [string]$Version = '0.1.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,15 +62,18 @@ $PublishRoot = (Resolve-Path -LiteralPath $PublishRoot).Path
 
 $guardSource = Join-Path $PublishRoot 'guard'
 $appSource = Join-Path $PublishRoot 'app'
+$dropBridgeSource = Join-Path $PublishRoot 'dropbridge'
 $uninstallerSource = Join-Path $PublishRoot 'uninstall'
 $guardBinary = Join-Path $guardSource 'BlockGame.Guard.exe'
 $appBinary = Join-Path $appSource 'BlockGame.App.exe'
+$dropBridgeBinary = Join-Path $dropBridgeSource 'BlockGame.DropBridge.exe'
 $uninstallerBinary = Join-Path $uninstallerSource 'BlockGame.Uninstall.exe'
 $guardCore = Join-Path $guardSource 'BlockGame.Core.dll'
 $appCore = Join-Path $appSource 'BlockGame.Core.dll'
 $uninstallerCore = Join-Path $uninstallerSource 'BlockGame.Core.dll'
 if (-not (Test-Path -LiteralPath $guardBinary) -or
     -not (Test-Path -LiteralPath $appBinary) -or
+    -not (Test-Path -LiteralPath $dropBridgeBinary) -or
     -not (Test-Path -LiteralPath $uninstallerBinary) -or
     -not (Test-Path -LiteralPath $guardCore) -or
     -not (Test-Path -LiteralPath $appCore) -or
@@ -96,6 +99,8 @@ $serviceName = 'BlockGameGuard'
 # Stop it before copying so Windows cannot leave the new app beside an old loaded core assembly.
 Get-Process -Name 'BlockGame.App' -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction Stop
+Get-Process -Name 'BlockGame.DropBridge' -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction Stop
 Get-Process -Name 'BlockGame.Uninstall' -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction Stop
 
@@ -115,12 +120,14 @@ if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
 New-Item -ItemType Directory -Force -Path $installDir, $dataDir | Out-Null
 Copy-PublishFiles -SourceDirectory $guardSource -DestinationDirectory $installDir
 Copy-PublishFiles -SourceDirectory $appSource -DestinationDirectory $installDir
+Copy-PublishFiles -SourceDirectory $dropBridgeSource -DestinationDirectory $installDir
 Copy-PublishFiles -SourceDirectory $uninstallerSource -DestinationDirectory $installDir
 
 # All executables load this shared assembly from the installation directory.
 # Copy it explicitly last and verify it so a mixed-version install cannot appear successful.
 Copy-Item -LiteralPath $appCore -Destination (Join-Path $installDir 'BlockGame.Core.dll') -Force
 Assert-FilesMatch -Expected $appBinary -Actual (Join-Path $installDir 'BlockGame.App.exe')
+Assert-FilesMatch -Expected $dropBridgeBinary -Actual (Join-Path $installDir 'BlockGame.DropBridge.exe')
 Assert-FilesMatch -Expected $guardBinary -Actual (Join-Path $installDir 'BlockGame.Guard.exe')
 Assert-FilesMatch -Expected $uninstallerBinary -Actual (Join-Path $installDir 'BlockGame.Uninstall.exe')
 Assert-FilesMatch -Expected $appCore -Actual (Join-Path $installDir 'BlockGame.Core.dll')
@@ -159,6 +166,8 @@ New-ItemProperty -Path $uninstallKey -Name UninstallString -Value "`"$(Join-Path
 
 $startMenu = Join-Path ${env:ProgramData} 'Microsoft\Windows\Start Menu\Programs\BlockGame.lnk'
 $programsDirectory = Join-Path ${env:ProgramData} 'Microsoft\Windows\Start Menu\Programs'
+$desktopDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)
+$desktopShortcut = Join-Path $desktopDirectory 'BlockGame.lnk'
 $uninstallShortcutName = (-join @([char]0x5378, [char]0x8F7D, ' BlockGame.lnk'))
 $uninstallStartMenu = Join-Path $programsDirectory $uninstallShortcutName
 $shell = New-Object -ComObject WScript.Shell
@@ -177,6 +186,11 @@ $shortcut.TargetPath = Join-Path $installDir 'BlockGame.App.exe'
 $shortcut.WorkingDirectory = $installDir
 $shortcut.Description = 'BlockGame Self-Control Assistant'
 $shortcut.Save()
+$desktopLink = $shell.CreateShortcut($desktopShortcut)
+$desktopLink.TargetPath = Join-Path $installDir 'BlockGame.App.exe'
+$desktopLink.WorkingDirectory = $installDir
+$desktopLink.Description = 'BlockGame Self-Control Assistant'
+$desktopLink.Save()
 $uninstallShortcut = $shell.CreateShortcut($uninstallStartMenu)
 $uninstallShortcut.TargetPath = Join-Path $installDir 'BlockGame.Uninstall.exe'
 $uninstallShortcut.WorkingDirectory = $installDir

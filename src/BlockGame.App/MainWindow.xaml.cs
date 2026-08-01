@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private bool _guardHealthCheckRunning;
     private string? _lastGuardWatchdogAuditMessage;
     private bool _updatingProtectionModeSelection;
+    private DropBridgeHost? _dropBridgeHost;
     private AppConfig _config;
 
     public MainWindow(
@@ -53,7 +54,20 @@ public partial class MainWindow : Window
         _config = _configStore.Load();
 
         InitializeComponent();
-        SourceInitialized += (_, _) => ElevatedFileDropSupport.TryAllowExplorerFileDrops(this);
+        SourceInitialized += (_, _) =>
+        {
+            _dropBridgeHost = new DropBridgeHost(
+                this,
+                ShortcutDropZone,
+                HandleBridgeFilesDropped,
+                UpdateDropBridgeAvailability);
+            _dropBridgeHost.Start();
+        };
+        Closed += (_, _) =>
+        {
+            _dropBridgeHost?.Dispose();
+            _dropBridgeHost = null;
+        };
         RulesDataGrid.ItemsSource = _rules;
         AuditDataGrid.ItemsSource = _auditRows;
         DataDirectoryText.Text = "数据目录：" + _paths.RootDirectory;
@@ -538,18 +552,37 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ShortcutDropZone_DragOver(object sender, DragEventArgs e)
+    private void BrowseShortcutButton_Click(object sender, RoutedEventArgs e)
     {
-        e.Effects = GetDroppedFiles(e.Data).Any(IsShortcutFile)
-            ? DragDropEffects.Copy
-            : DragDropEffects.None;
-        e.Handled = true;
+        var dialog = new OpenFileDialog
+        {
+            Title = "选择 Windows 快捷方式",
+            Filter = "Windows 快捷方式 (*.lnk)|*.lnk",
+            DefaultExt = ".lnk",
+            CheckFileExists = true,
+            Multiselect = true
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            ProcessDroppedShortcutFiles(dialog.FileNames);
+        }
     }
 
-    private void ShortcutDropZone_Drop(object sender, DragEventArgs e)
+    private void HandleBridgeFilesDropped(IReadOnlyList<string> files)
+        => ProcessDroppedShortcutFiles(files);
+
+    private void UpdateDropBridgeAvailability(bool available)
     {
-        e.Handled = true;
-        string[] droppedFiles = GetDroppedFiles(e.Data);
+        ShortcutDropHelpText.Text = available
+            ? "将桌面或开始菜单中的 .lnk 快捷方式拖到这里，或点击右侧按钮选择文件。"
+            : "拖放组件未能启动，请点击右侧按钮选择 .lnk 快捷方式。";
+    }
+
+    private void ProcessDroppedShortcutFiles(IEnumerable<string> droppedFilePaths)
+    {
+        string[] droppedFiles = droppedFilePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToArray();
         string[] shortcutPaths = droppedFiles
             .Where(IsShortcutFile)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -702,12 +735,6 @@ public partial class MainWindow : Window
             MessageBoxButton.OK,
             issues.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
-
-    private static string[] GetDroppedFiles(System.Windows.IDataObject data)
-        => data.GetDataPresent(DataFormats.FileDrop)
-            && data.GetData(DataFormats.FileDrop) is string[] files
-                ? files
-                : [];
 
     private static bool IsShortcutFile(string path)
         => string.Equals(Path.GetExtension(path), ".lnk", StringComparison.OrdinalIgnoreCase);

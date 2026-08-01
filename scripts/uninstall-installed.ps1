@@ -72,6 +72,8 @@ Get-Process -Name 'BlockGame.App' -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process -Name 'BlockGame.App' -ErrorAction SilentlyContinue |
     Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+Get-Process -Name 'BlockGame.DropBridge' -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
 
 Set-Content -LiteralPath $maintenanceStopFile -Value ([Guid]::NewGuid().ToString('N')) -Encoding ASCII
 try {
@@ -84,6 +86,8 @@ finally {
 & schtasks.exe /Delete /TN 'BlockGameAutoStart' /F 2>$null | Out-Null
 Remove-Item -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\BlockGame' -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path ${env:ProgramData} 'Microsoft\Windows\Start Menu\Programs\BlockGame.lnk') -Force -ErrorAction SilentlyContinue
+$desktopDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)
+Remove-Item -LiteralPath (Join-Path $desktopDirectory 'BlockGame.lnk') -Force -ErrorAction SilentlyContinue
 $uninstallShortcutName = (-join @([char]0x5378, [char]0x8F7D, ' BlockGame.lnk'))
 Remove-Item -LiteralPath (Join-Path ${env:ProgramData} "Microsoft\Windows\Start Menu\Programs\$uninstallShortcutName") -Force -ErrorAction SilentlyContinue
 

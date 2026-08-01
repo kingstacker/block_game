@@ -18,11 +18,6 @@
         <SolidColorBrush x:Key="FooterBackground" Color="#EAF2FC" />
         <SolidColorBrush x:Key="DangerButtonBackground" Color="#FEE2E2" />
 
-        <LinearGradientBrush x:Key="HeaderGradient" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Offset="0" Color="#1D4ED8" />
-            <GradientStop Offset="1" Color="#3B82F6" />
-        </LinearGradientBrush>
-
         <Style TargetType="Window">
             <Setter Property="FontFamily" Value="Segoe UI" />
             <Setter Property="FontSize" Value="14" />

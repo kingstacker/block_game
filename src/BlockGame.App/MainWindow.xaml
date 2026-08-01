@@ -10,28 +10,11 @@
         WindowStartupLocation="CenterScreen">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="{StaticResource HeaderGradient}" Padding="28,18">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel>
-                    <TextBlock Text="BlockGame" FontSize="25" FontWeight="SemiBold" Foreground="White" />
-                    <TextBlock Text="把临时冲动变成需要等待的决定" Margin="0,4,0,0" Foreground="#DBEAFE" />
-                </StackPanel>
-                <Border Grid.Column="1" Background="#33FFFFFF" CornerRadius="8" Padding="14,7" VerticalAlignment="Center">
-                    <TextBlock x:Name="HeaderGuardStatusText" Text="正在检查守护程序…" Foreground="White" />
-                </Border>
-            </Grid>
-        </Border>
-
-        <TabControl Grid.Row="1" Margin="22" Background="Transparent" BorderThickness="0">
+        <TabControl Grid.Row="0" Margin="22" Background="Transparent" BorderThickness="0">
             <TabItem Header="概览">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="4,18,4,0">
@@ -144,56 +127,93 @@
                     <Border Grid.Row="0" Style="{StaticResource PanelCard}" Margin="0,0,0,14">
                         <StackPanel>
                             <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.1*" />
-                                <ColumnDefinition Width="150" />
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
-                                <TextBlock Text="规则名称" Margin="0,0,0,5" Foreground="{StaticResource MutedTextBrush}" />
-                                <TextBox x:Name="RuleNameTextBox" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Margin="0,0,12,0">
-                                <TextBlock Text="匹配方式" Margin="0,0,0,5" Foreground="{StaticResource MutedTextBrush}" />
-                                <ComboBox x:Name="RuleTargetComboBox"
-                                          SelectedIndex="0"
-                                          SelectionChanged="RuleTargetComboBox_SelectionChanged">
-                                    <ComboBoxItem Content="程序文件名" Tag="FileName" />
-                                    <ComboBoxItem Content="完整路径" Tag="FullPath" />
-                                    <ComboBoxItem Content="网站域名" Tag="Domain" />
-                                </ComboBox>
-                            </StackPanel>
-                            <StackPanel Grid.Column="2" Margin="0,0,12,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="190" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                    <TextBlock Text="规则名称"
+                                               Margin="0,0,0,6"
+                                               Foreground="{StaticResource MutedTextBrush}" />
+                                    <TextBox x:Name="RuleNameTextBox" Height="38" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="0,0,12,0">
+                                    <TextBlock Text="匹配方式"
+                                               Margin="0,0,0,6"
+                                               Foreground="{StaticResource MutedTextBrush}" />
+                                    <ComboBox x:Name="RuleTargetComboBox"
+                                              Height="38"
+                                              SelectedIndex="0"
+                                              SelectionChanged="RuleTargetComboBox_SelectionChanged">
+                                        <ComboBoxItem Content="程序文件名" Tag="FileName" />
+                                        <ComboBoxItem Content="完整路径" Tag="FullPath" />
+                                        <ComboBoxItem Content="网站域名" Tag="Domain" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <Button x:Name="BrowseExeButton"
+                                        Grid.Column="2"
+                                        Height="38"
+                                        MinWidth="100"
+                                        VerticalAlignment="Bottom"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Content="选择 EXE"
+                                        Click="BrowseExeButton_Click" />
+                                <Button Grid.Column="3"
+                                        Height="38"
+                                        MinWidth="100"
+                                        Margin="0"
+                                        VerticalAlignment="Bottom"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Content="添加规则"
+                                        Click="AddRuleButton_Click" />
+                            </Grid>
+
+                            <StackPanel Margin="0,14,0,0">
                                 <TextBlock x:Name="RulePatternHelpText"
                                            Text="匹配文件名、内部产品名或文件描述（支持 * 和 ?，自动补 .exe）"
-                                           Margin="0,0,0,5"
+                                           Margin="0,0,0,6"
+                                           TextWrapping="Wrap"
                                            Foreground="{StaticResource MutedTextBrush}" />
                                 <TextBox x:Name="RulePatternTextBox"
-                                         Height="88"
+                                         Height="72"
                                          AcceptsReturn="True"
                                          TextWrapping="Wrap"
                                          VerticalContentAlignment="Top"
                                          VerticalScrollBarVisibility="Auto" />
                             </StackPanel>
-                                <Button x:Name="BrowseExeButton" Grid.Column="3" Style="{StaticResource SecondaryButton}" Content="选择 EXE" VerticalAlignment="Bottom" Click="BrowseExeButton_Click" />
-                                <Button Grid.Column="4" Style="{StaticResource PrimaryButton}" Content="添加规则" VerticalAlignment="Bottom" Margin="0" Click="AddRuleButton_Click" />
-                            </Grid>
 
                             <Border x:Name="ShortcutDropZone"
                                     Margin="0,14,0,0"
-                                    Padding="14,10"
-                                    CornerRadius="7"
+                                    MinHeight="58"
+                                    Padding="14,9"
+                                    CornerRadius="8"
                                     Background="#EFF6FF"
                                     BorderBrush="#BFDBFE"
-                                    BorderThickness="1"
-                                    AllowDrop="True"
-                                    DragOver="ShortcutDropZone_DragOver"
-                                    Drop="ShortcutDropZone_Drop">
-                                <TextBlock Text="将桌面或开始菜单中的 .lnk 快捷方式拖到这里，可读取目标 EXE 并生成启用的完整路径规则。"
-                                           TextWrapping="Wrap"
-                                           Foreground="{StaticResource AccentTextBrush}" />
+                                    BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               x:Name="ShortcutDropHelpText"
+                                               Text="将桌面或开始菜单中的 .lnk 快捷方式拖到这里，或点击右侧按钮选择文件。"
+                                               TextWrapping="Wrap"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource AccentTextBrush}" />
+                                    <Button Grid.Column="1"
+                                            MinWidth="126"
+                                            Height="38"
+                                            Margin="16,0,0,0"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Background="White"
+                                            BorderBrush="{StaticResource AccentBorderBrush}"
+                                            BorderThickness="1"
+                                            Content="选择快捷方式"
+                                            Click="BrowseShortcutButton_Click" />
+                                </Grid>
                             </Border>
                         </StackPanel>
                     </Border>
@@ -376,10 +396,28 @@
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="2" Background="{StaticResource FooterBackground}" Padding="22,9">
-            <TextBlock VerticalAlignment="Center"
-                       Text="BlockGame v0.1 · 本工具提供自我约束阻力，但本机管理员仍拥有最终系统恢复能力。"
-                       Foreground="{StaticResource MutedTextBrush}" />
+        <Border Grid.Row="1" Background="{StaticResource FooterBackground}" Padding="22,9">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           VerticalAlignment="Center"
+                           Text="BlockGame v0.1.1 · 本工具提供自我约束阻力，但本机管理员仍拥有最终系统恢复能力。"
+                           Foreground="{StaticResource MutedTextBrush}" />
+                <Border Grid.Column="1"
+                        Margin="18,0,0,0"
+                        Padding="10,4"
+                        VerticalAlignment="Center"
+                        Background="#DCEBFC"
+                        CornerRadius="6">
+                    <TextBlock x:Name="HeaderGuardStatusText"
+                               Text="正在检查守护程序…"
+                               FontSize="12"
+                               Foreground="{StaticResource AccentTextBrush}" />
+                </Border>
+            </Grid>
         </Border>
     </Grid>
 </Window>

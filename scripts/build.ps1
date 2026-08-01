@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
-    [switch]$SelfContained
+    [switch]$SelfContained,
+
+    [ValidatePattern('^\d+\.\d+\.\d+(?:\.\d+)?$')]
+    [string]$Version = '0.1.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,6 +12,7 @@ $buildHome = Join-Path $repoRoot '.build-appdata'
 $dotnetHome = Join-Path $repoRoot '.dotnet-cli'
 $nugetPackages = Join-Path $repoRoot '.nuget\packages'
 $publishRoot = Join-Path $repoRoot 'artifacts\publish'
+$binaryVersion = if ($Version.Split('.').Count -eq 3) { "$Version.0" } else { $Version }
 
 $env:DOTNET_CLI_HOME = $dotnetHome
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
@@ -45,7 +49,11 @@ $commonArguments = @(
     '--self-contained', $(if ($SelfContained) { 'true' } else { 'false' }),
     '--no-restore',
     '-p:DebugType=None',
-    '-p:DebugSymbols=false'
+    '-p:DebugSymbols=false',
+    "-p:Version=$Version",
+    "-p:AssemblyVersion=$binaryVersion",
+    "-p:FileVersion=$binaryVersion",
+    "-p:InformationalVersion=$Version"
 )
 if ($SelfContained) {
     $commonArguments += @('-r', 'win-x64')
@@ -55,6 +63,8 @@ dotnet publish (Join-Path $repoRoot 'src\BlockGame.Guard\BlockGame.Guard.csproj'
 if ($LASTEXITCODE -ne 0) { throw 'Guard publish failed.' }
 dotnet publish (Join-Path $repoRoot 'src\BlockGame.App\BlockGame.App.csproj') @commonArguments -o (Join-Path $publishRoot 'app')
 if ($LASTEXITCODE -ne 0) { throw 'App publish failed.' }
+dotnet publish (Join-Path $repoRoot 'src\BlockGame.DropBridge\BlockGame.DropBridge.csproj') @commonArguments -o (Join-Path $publishRoot 'dropbridge')
+if ($LASTEXITCODE -ne 0) { throw 'Drop bridge publish failed.' }
 dotnet publish (Join-Path $repoRoot 'src\BlockGame.Uninstall\BlockGame.Uninstall.csproj') @commonArguments -o (Join-Path $publishRoot 'uninstall')
 if ($LASTEXITCODE -ne 0) { throw 'Uninstaller publish failed.' }
 

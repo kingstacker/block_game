@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+(?:\.\d+)?$')]
-    [string]$Version = '0.1.0'
+    [string]$Version = '0.1.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,7 +34,7 @@ function Find-InnoCompiler {
     throw 'Inno Setup 6 was not found. Install it with: winget install --id JRSoftware.InnoSetup --exact'
 }
 
-& $buildScript -SelfContained
+& $buildScript -SelfContained -Version $Version
 if ($LASTEXITCODE -ne 0) {
     throw 'Self-contained application build failed.'
 }

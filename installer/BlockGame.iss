@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.1.1"
 #endif
 
 #define MyAppName "BlockGame"
@@ -35,7 +35,7 @@ SolidCompression=yes
 Uninstallable=no
 CreateAppDir=no
 CloseApplications=yes
-CloseApplicationsFilter=BlockGame.App.exe,BlockGame.Uninstall.exe
+CloseApplicationsFilter=BlockGame.App.exe,BlockGame.DropBridge.exe,BlockGame.Uninstall.exe
 RestartApplications=no
 UsePreviousAppDir=no
 UsePreviousGroup=no
@@ -43,6 +43,7 @@ UsePreviousTasks=no
 
 [Files]
 Source: "..\artifacts\publish\app\*"; DestDir: "{tmp}\BlockGamePayload\app"; Flags: ignoreversion recursesubdirs createallsubdirs deleteafterinstall
+Source: "..\artifacts\publish\dropbridge\*"; DestDir: "{tmp}\BlockGamePayload\dropbridge"; Flags: ignoreversion recursesubdirs createallsubdirs deleteafterinstall
 Source: "..\artifacts\publish\guard\*"; DestDir: "{tmp}\BlockGamePayload\guard"; Flags: ignoreversion recursesubdirs createallsubdirs deleteafterinstall
 Source: "..\artifacts\publish\uninstall\*"; DestDir: "{tmp}\BlockGamePayload\uninstall"; Flags: ignoreversion recursesubdirs createallsubdirs deleteafterinstall
 Source: "..\artifacts\publish\uninstall-installed.ps1"; DestDir: "{tmp}\BlockGamePayload"; Flags: ignoreversion deleteafterinstall
