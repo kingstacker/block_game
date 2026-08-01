@@ -1,6 +1,7 @@
 <Window x:Class="BlockGame.Uninstall.UninstallWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:BlockGame.Uninstall"
         Title="卸载 BlockGame"
         Width="500"
         SizeToContent="Height"
@@ -28,8 +29,8 @@
 
         <StackPanel x:Name="PasswordPanel" Grid.Row="1" Margin="0,22,0,0">
             <TextBlock Text="管理密码" Margin="0,0,0,6" />
-            <PasswordBox x:Name="PasswordInput"
-                         KeyDown="PasswordInput_KeyDown" />
+            <local:TransientPasswordBox x:Name="PasswordInput"
+                                        KeyDown="PasswordInput_KeyDown" />
         </StackPanel>
 
         <Grid Grid.Row="2" Margin="0,22,0,0">

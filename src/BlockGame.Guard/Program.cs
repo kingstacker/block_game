@@ -31,6 +31,11 @@ internal static class Program
                 return CleanupNetworkPolicies(paths, auditLog);
             }
 
+            if (args.Contains("--verify-unconfigured-uninstall", StringComparer.OrdinalIgnoreCase))
+            {
+                return VerifyUnconfiguredUninstall(paths, configStore, auditLog);
+            }
+
             int tokenArgument = Array.FindIndex(
                 args,
                 argument => string.Equals(argument, "--verify-uninstall-token", StringComparison.OrdinalIgnoreCase));
@@ -91,11 +96,24 @@ internal static class Program
         ConfigStore configStore,
         AuditLog auditLog)
     {
-        AppConfig config = configStore.Load();
-        bool valid = UninstallAuthorizationService.ValidateAndConsume(
-            config,
-            token,
-            DateTimeOffset.UtcNow);
+        bool valid = false;
+        _ = configStore.Update(config =>
+        {
+            valid = UninstallAuthorizationService.ValidateAndConsume(
+                config,
+                token,
+                DateTimeOffset.UtcNow);
+            if (!valid)
+            {
+                return false;
+            }
+
+            config.ProtectionEnabled = false;
+            config.ProtectionLocked = false;
+            config.UnlockRequestedAtUtc = null;
+            config.UnlockAvailableAtUtc = null;
+            return true;
+        });
 
         TryAppendAudit(
             auditLog,
@@ -111,11 +129,63 @@ internal static class Program
             return 3;
         }
 
-        config.ProtectionEnabled = false;
-        config.ProtectionLocked = false;
-        config.UnlockRequestedAtUtc = null;
-        config.UnlockAvailableAtUtc = null;
-        configStore.Save(config);
+        return FinishUninstallVerification(paths, auditLog);
+    }
+
+    private static int VerifyUnconfiguredUninstall(
+        DataPaths paths,
+        ConfigStore configStore,
+        AuditLog auditLog)
+    {
+        bool valid = false;
+        bool cleanupRequired = false;
+        _ = configStore.Update(config =>
+        {
+            valid = !config.SetupCompleted && !config.ProtectionLocked;
+            if (!valid)
+            {
+                return false;
+            }
+
+            cleanupRequired = config.ProtectionEnabled;
+            config.ProtectionEnabled = false;
+            config.UnlockRequestedAtUtc = null;
+            config.UnlockAvailableAtUtc = null;
+            ProtectionManager.ClearUninstallAuthorization(config);
+            return true;
+        });
+
+        TryAppendAudit(
+            auditLog,
+            new AuditEntry
+            {
+                EventType = "UnconfiguredUninstallValidation",
+                Message = valid
+                    ? "首次设置尚未完成，允许移除未配置的安装。"
+                    : "未配置安装卸载校验失败：首次设置已完成或保护仍处于锁定状态。",
+                Success = valid
+            });
+
+        if (!valid)
+        {
+            return 3;
+        }
+
+        if (!cleanupRequired)
+        {
+            if (File.Exists(paths.UninstallTokenFile))
+            {
+                File.Delete(paths.UninstallTokenFile);
+            }
+
+            return 0;
+        }
+
+        return FinishUninstallVerification(paths, auditLog);
+    }
+
+    private static int FinishUninstallVerification(DataPaths paths, AuditLog auditLog)
+    {
         if (File.Exists(paths.UninstallTokenFile))
         {
             File.Delete(paths.UninstallTokenFile);

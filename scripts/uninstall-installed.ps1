@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [int]$WaitForProcessId = 0
+    [int]$WaitForProcessId = 0,
+
+    [switch]$UnconfiguredInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +31,9 @@ function ConvertTo-QuotedProcessArgument {
 if (-not (Test-IsAdministrator)) {
     $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -WaitForProcessId {1}' -f `
         $PSCommandPath, $WaitForProcessId
+    if ($UnconfiguredInstall) {
+        $arguments += ' -UnconfiguredInstall'
+    }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments
     exit 0
 }
@@ -52,18 +57,30 @@ if ([IO.Path]::GetFullPath($installDir) -ne $expectedInstall -or [IO.Path]::GetF
     throw 'Uninstall target path validation failed.'
 }
 
-if (-not (Test-Path -LiteralPath $guardExe) -or -not (Test-Path -LiteralPath $tokenFile)) {
-    throw 'No valid uninstall authorization found. Generate one in BlockGame settings first.'
+if (-not (Test-Path -LiteralPath $guardExe)) {
+    throw 'The BlockGame guard component is missing.'
 }
 
-$token = (Get-Content -LiteralPath $tokenFile -Raw).Trim()
-if ([string]::IsNullOrWhiteSpace($token)) {
-    throw 'The uninstall authorization is empty.'
+if ($UnconfiguredInstall) {
+    & $guardExe --verify-unconfigured-uninstall
+    if ($LASTEXITCODE -ne 0) {
+        throw 'The installation is already configured, locked, or cannot be prepared for removal.'
+    }
 }
+else {
+    if (-not (Test-Path -LiteralPath $tokenFile)) {
+        throw 'No valid uninstall authorization found. Generate one in BlockGame settings first.'
+    }
 
-& $guardExe --verify-uninstall-token $token
-if ($LASTEXITCODE -ne 0) {
-    throw 'The uninstall authorization is invalid, expired, or protection is still locked.'
+    $token = (Get-Content -LiteralPath $tokenFile -Raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        throw 'The uninstall authorization is empty.'
+    }
+
+    & $guardExe --verify-uninstall-token $token
+    if ($LASTEXITCODE -ne 0) {
+        throw 'The uninstall authorization is invalid, expired, or protection is still locked.'
+    }
 }
 
 # The management UI may have started the uninstaller and still be holding its
@@ -83,7 +100,17 @@ finally {
     Remove-Item -LiteralPath $maintenanceStopFile -Force -ErrorAction SilentlyContinue
 }
 & sc.exe delete $serviceName | Out-Null
-& schtasks.exe /Delete /TN 'BlockGameAutoStart' /F 2>$null | Out-Null
+$scheduledTaskTool = Join-Path $env:SystemRoot 'System32\schtasks.exe'
+if (Test-Path -LiteralPath $scheduledTaskTool) {
+    # schtasks writes "task not found" to stderr. Start it separately so an
+    # already-missing optional startup task does not abort the whole uninstall.
+    Start-Process `
+        -FilePath $scheduledTaskTool `
+        -ArgumentList @('/Delete', '/TN', 'BlockGameAutoStart', '/F') `
+        -WindowStyle Hidden `
+        -Wait `
+        -ErrorAction SilentlyContinue
+}
 Remove-Item -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\BlockGame' -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path ${env:ProgramData} 'Microsoft\Windows\Start Menu\Programs\BlockGame.lnk') -Force -ErrorAction SilentlyContinue
 $desktopDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)

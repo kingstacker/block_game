@@ -34,6 +34,7 @@ internal static class Program
             ("锁定期间延长冷静期", UnlockDelayExtension),
             ("一次性卸载令牌", UninstallToken),
             ("密码保护卸载授权", PasswordProtectedUninstall),
+            ("未配置安装并发卸载", UnconfiguredUninstallDuringMigration),
             ("配置和审计持久化", Persistence),
             ("诊断日志导出", DiagnosticLogExport),
             ("审计日志轮转", AuditRotation)
@@ -1126,6 +1127,82 @@ internal static class Program
                 && !notConfiguredResult.PasswordVerified
                 && !string.IsNullOrWhiteSpace(notConfiguredResult.Token),
             "尚未首次设置的安装无法移除。");
+    }
+
+    private static void UnconfiguredUninstallDuringMigration()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "BlockGameSelfTest",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new DataPaths(root);
+            var store = new ConfigStore(paths);
+            using var migrationStarted = new ManualResetEventSlim(false);
+            using var continueMigration = new ManualResetEventSlim(false);
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            Task migrationTask = Task.Run(() =>
+                store.Update(config =>
+                {
+                    migrationStarted.Set();
+                    if (!continueMigration.Wait(TimeSpan.FromSeconds(3)))
+                    {
+                        throw new TimeoutException("等待并发卸载测试超时。");
+                    }
+
+                    _ = DefaultRulePresets.Apply(config);
+                    return true;
+                }));
+            Assert(
+                migrationStarted.Wait(TimeSpan.FromSeconds(3)),
+                "守护迁移未进入原子更新。");
+
+            UninstallPreparationResult? preparation = null;
+            Task uninstallTask = Task.Run(() =>
+                store.Update(config =>
+                {
+                    preparation = PasswordProtectedUninstallService.Prepare(
+                        config,
+                        null,
+                        now);
+                    return true;
+                }));
+
+            continueMigration.Set();
+            Task.WaitAll(migrationTask, uninstallTask);
+
+            Assert(
+                preparation is { Success: true, PasswordVerified: false }
+                    && !string.IsNullOrWhiteSpace(preparation.Token),
+                "未设置密码时未生成卸载授权。");
+            string token = preparation?.Token
+                ?? throw new InvalidOperationException("未配置安装缺少卸载令牌。");
+            AppConfig persisted = store.Load();
+            Assert(
+                persisted.DefaultRulePresetVersion == DefaultRulePresets.CurrentVersion,
+                "并发卸载覆盖了守护迁移结果。");
+            Assert(
+                UninstallAuthorizationService.ValidateAndConsume(
+                    persisted,
+                    token,
+                    now.AddMinutes(1)),
+                "守护迁移覆盖了未配置安装的卸载授权。");
+        }
+        finally
+        {
+            string fullRoot = Path.GetFullPath(root);
+            string expectedParent = Path.GetFullPath(
+                Path.Combine(Path.GetTempPath(), "BlockGameSelfTest"));
+            if (Directory.Exists(fullRoot)
+                && fullRoot.StartsWith(
+                    expectedParent + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                Directory.Delete(fullRoot, recursive: true);
+            }
+        }
     }
 
     private static void RuleTransferRoundTrip()

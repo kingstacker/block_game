@@ -21,6 +21,39 @@ public sealed class ConfigStore
         using CrossProcessLock configLock = CrossProcessLock.Acquire(
             CrossProcessMutexName,
             LockTimeout);
+        return LoadWithoutLock();
+    }
+
+    /// <summary>
+    /// 在同一把跨进程锁内完成读取、修改和可选保存，避免另一个组件用旧快照
+    /// 覆盖刚写入的密码限流、卸载授权或迁移结果。
+    /// </summary>
+    public AppConfig Update(Func<AppConfig, bool> update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        using CrossProcessLock configLock = CrossProcessLock.Acquire(
+            CrossProcessMutexName,
+            LockTimeout);
+        AppConfig config = LoadWithoutLock();
+        if (update(config))
+        {
+            SaveWithoutLock(config);
+        }
+
+        return config;
+    }
+
+    public void Save(AppConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        using CrossProcessLock configLock = CrossProcessLock.Acquire(
+            CrossProcessMutexName,
+            LockTimeout);
+        SaveWithoutLock(config);
+    }
+
+    private AppConfig LoadWithoutLock()
+    {
         _paths.EnsureDirectory();
         if (!File.Exists(_paths.ConfigFile))
         {
@@ -57,12 +90,8 @@ public sealed class ConfigStore
         return config;
     }
 
-    public void Save(AppConfig config)
+    private void SaveWithoutLock(AppConfig config)
     {
-        ArgumentNullException.ThrowIfNull(config);
-        using CrossProcessLock configLock = CrossProcessLock.Acquire(
-            CrossProcessMutexName,
-            LockTimeout);
         _paths.EnsureDirectory();
         config.SchemaVersion = AppConfig.CurrentSchemaVersion;
 

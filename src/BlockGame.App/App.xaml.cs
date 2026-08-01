@@ -69,18 +69,14 @@ public partial class App : System.Windows.Application
                 setupCompletedNow = true;
             }
 
-            bool configChanged = SafetyPolicy.NormalizeFileNameRulePatterns(config);
-            configChanged |= SafetyPolicy.NormalizeDomainRulePatterns(config);
-            int addedDefaultRules = DefaultRulePresets.Apply(config);
-            if (addedDefaultRules > 0)
+            int addedDefaultRules = 0;
+            config = configStore.Update(current =>
             {
-                configChanged = true;
-            }
-
-            if (configChanged)
-            {
-                configStore.Save(config);
-            }
+                bool configChanged = SafetyPolicy.NormalizeFileNameRulePatterns(current);
+                configChanged |= SafetyPolicy.NormalizeDomainRulePatterns(current);
+                addedDefaultRules = DefaultRulePresets.Apply(current);
+                return configChanged || addedDefaultRules > 0;
+            });
             if (addedDefaultRules > 0)
             {
                 auditLog.Append(new BlockGame.Core.Models.AuditEntry

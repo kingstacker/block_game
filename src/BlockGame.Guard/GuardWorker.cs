@@ -152,14 +152,14 @@ internal sealed class GuardWorker
 
     private AppConfig LoadConfigAndApplyMigrations()
     {
-        AppConfig config = _configStore.Load();
-        bool normalized = SafetyPolicy.NormalizeFileNameRulePatterns(config);
-        normalized |= SafetyPolicy.NormalizeDomainRulePatterns(config);
-        int addedDefaultRules = DefaultRulePresets.Apply(config);
-        if (normalized || addedDefaultRules > 0)
+        int addedDefaultRules = 0;
+        AppConfig config = _configStore.Update(current =>
         {
-            _configStore.Save(config);
-        }
+            bool normalized = SafetyPolicy.NormalizeFileNameRulePatterns(current);
+            normalized |= SafetyPolicy.NormalizeDomainRulePatterns(current);
+            addedDefaultRules = DefaultRulePresets.Apply(current);
+            return normalized || addedDefaultRules > 0;
+        });
         if (addedDefaultRules > 0)
         {
             TryAudit(new AuditEntry

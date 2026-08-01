@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PublishRoot = '',
-    [string]$Version = '0.1.1'
+    [string]$Version = '0.1.2'
 )
 
 $ErrorActionPreference = 'Stop'

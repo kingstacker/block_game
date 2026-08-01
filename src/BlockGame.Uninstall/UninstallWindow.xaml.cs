@@ -58,8 +58,23 @@ public partial class UninstallWindow : Window
         UninstallButton.IsEnabled = false;
         try
         {
-            AppConfig config = _configStore.Load();
-            if (!config.SetupCompleted && _setupCompleted)
+            bool setupStateChanged = false;
+            UninstallPreparationResult? preparation = null;
+            AppConfig config = _configStore.Update(current =>
+            {
+                if (current.SetupCompleted != _setupCompleted)
+                {
+                    setupStateChanged = true;
+                    return false;
+                }
+
+                preparation = PasswordProtectedUninstallService.Prepare(
+                    current,
+                    PasswordInput.Password,
+                    DateTimeOffset.UtcNow);
+                return true;
+            });
+            if (setupStateChanged)
             {
                 MessageBox.Show(
                     "BlockGame 配置状态已变化，请重新打开卸载程序。",
@@ -69,12 +84,11 @@ public partial class UninstallWindow : Window
                 return;
             }
 
-            UninstallPreparationResult preparation =
-                PasswordProtectedUninstallService.Prepare(
-                    config,
-                    PasswordInput.Password,
-                    DateTimeOffset.UtcNow);
-            _configStore.Save(config);
+            if (preparation is null)
+            {
+                throw new InvalidOperationException("无法生成卸载授权。");
+            }
+
             if (config.SetupCompleted)
             {
                 AppendAudit(
@@ -103,12 +117,17 @@ public partial class UninstallWindow : Window
                 MessageBoxResult.No);
             if (confirmation != MessageBoxResult.Yes)
             {
-                ProtectionManager.ClearUninstallAuthorization(config);
-                _configStore.Save(config);
+                _ = _configStore.Update(current =>
+                {
+                    ProtectionManager.ClearUninstallAuthorization(current);
+                    return true;
+                });
                 return;
             }
 
-            StartAuthorizedUninstall(preparation.Token);
+            StartAuthorizedUninstall(
+                preparation.Token,
+                unconfiguredInstall: !config.SetupCompleted);
         }
         catch (Exception exception)
         {
@@ -124,7 +143,7 @@ public partial class UninstallWindow : Window
         }
     }
 
-    private void StartAuthorizedUninstall(string token)
+    private void StartAuthorizedUninstall(string token, bool unconfiguredInstall)
     {
         string uninstallScript = Path.Combine(_paths.RootDirectory, "uninstall-installed.ps1");
         if (!File.Exists(uninstallScript))
@@ -132,8 +151,16 @@ public partial class UninstallWindow : Window
             throw new FileNotFoundException("找不到 BlockGame 卸载组件。", uninstallScript);
         }
 
-        File.WriteAllText(_paths.UninstallTokenFile, token);
-        AppendAudit("已通过管理密码授权卸载。", true);
+        if (!unconfiguredInstall)
+        {
+            File.WriteAllText(_paths.UninstallTokenFile, token);
+        }
+
+        AppendAudit(
+            unconfiguredInstall
+                ? "首次设置尚未完成，已授权移除未配置的安装。"
+                : "已通过管理密码授权卸载。",
+            true);
 
         string powerShell = Path.Combine(
             Environment.SystemDirectory,
@@ -142,7 +169,9 @@ public partial class UninstallWindow : Window
         {
             FileName = powerShell,
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
         };
         startInfo.ArgumentList.Add("-NoProfile");
         startInfo.ArgumentList.Add("-ExecutionPolicy");
@@ -151,13 +180,28 @@ public partial class UninstallWindow : Window
         startInfo.ArgumentList.Add(uninstallScript);
         startInfo.ArgumentList.Add("-WaitForProcessId");
         startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+        if (unconfiguredInstall)
+        {
+            startInfo.ArgumentList.Add("-UnconfiguredInstall");
+        }
 
         using Process process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("无法启动 BlockGame 卸载组件。");
+        Task<string> standardOutputTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> standardErrorTask = process.StandardError.ReadToEndAsync();
         process.WaitForExit();
         if (process.ExitCode != 0)
         {
-            throw new InvalidOperationException($"卸载组件返回错误代码 {process.ExitCode}。");
+            string standardOutput = standardOutputTask.GetAwaiter().GetResult();
+            string standardError = standardErrorTask.GetAwaiter().GetResult();
+            string detail = string.IsNullOrWhiteSpace(standardError)
+                ? standardOutput
+                : standardError;
+            throw new InvalidOperationException(
+                $"卸载组件返回错误代码 {process.ExitCode}。"
+                + (string.IsNullOrWhiteSpace(detail)
+                    ? string.Empty
+                    : "\n\n" + detail.Trim()));
         }
 
         Application.Current.Shutdown(0);

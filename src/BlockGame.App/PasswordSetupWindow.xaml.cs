@@ -41,15 +41,17 @@ public partial class PasswordSetupWindow : Window
 
         try
         {
-            AppConfig config = _configStore.Load();
-            config.Password = PasswordHasher.Create(PasswordBox.Password);
-            config.PasswordThrottle = new PasswordThrottle();
-            config.UnlockDelayMinutes = delayMinutes;
-            config.SetupCompleted = true;
-            config.ProtectionMode = ProtectionMode.Strict;
-            config.ProtectionEnabled = false;
-            config.ProtectionLocked = false;
-            _configStore.Save(config);
+            _ = _configStore.Update(config =>
+            {
+                config.Password = PasswordHasher.Create(PasswordBox.Password);
+                config.PasswordThrottle = new PasswordThrottle();
+                config.UnlockDelayMinutes = delayMinutes;
+                config.SetupCompleted = true;
+                config.ProtectionMode = ProtectionMode.Strict;
+                config.ProtectionEnabled = false;
+                config.ProtectionLocked = false;
+                return true;
+            });
             _auditLog.Append(new AuditEntry
             {
                 EventType = "SetupCompleted",
