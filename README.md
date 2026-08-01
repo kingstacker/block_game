@@ -119,5 +119,5 @@ dotnet run --project .\tests\BlockGame.SelfTest\BlockGame.SelfTest.csproj
 v0.1.4 使用高频进程监控，因此被拦截程序可能短暂出现；AppLocker / WDAC 的创建和签名策略将在后续版本加入。网站规则按域名生效，无法只屏蔽 URL 中的某个路径；企业域策略、VPN 或自带代理/解析器的软件可能优先使用自己的策略。拥有本机管理员权限的人仍可以进入安全模式、离线修改文件或重装系统。本项目不使用隐藏持久化、内核驱动或破坏系统的方式。
 
 ## 致谢
-社区：https://linux.do/?tl=en
+社区：[linux do](https://linux.do/?tl=en)
 公益站：any
