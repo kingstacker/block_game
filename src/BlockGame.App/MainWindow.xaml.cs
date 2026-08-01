@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -111,10 +112,21 @@ public partial class MainWindow : Window
             : "未检测到守护程序";
 
         bool previewMode = _config.ProtectionMode == ProtectionMode.Preview;
+        bool negotiationMode = _config.ProtectionMode == ProtectionMode.Negotiation;
         ProtectionStatusText.Text = _config.ProtectionEnabled
-            ? previewMode ? "预览拦截中" : "严格拦截中"
+            ? _config.ProtectionMode switch
+            {
+                ProtectionMode.Preview => "预览拦截中",
+                ProtectionMode.Negotiation => "协商拦截中",
+                _ => "严格拦截中"
+            }
             : "已暂停";
-        ModeStatusText.Text = previewMode ? "预览屏蔽" : "严格模式";
+        ModeStatusText.Text = _config.ProtectionMode switch
+        {
+            ProtectionMode.Preview => "预览屏蔽",
+            ProtectionMode.Negotiation => "协商模式",
+            _ => "严格模式"
+        };
         LockStatusText.Text = _config.ProtectionLocked
             ? "已锁定"
             : previewMode ? "不锁定" : "可管理";
@@ -122,9 +134,12 @@ public partial class MainWindow : Window
 
         RefreshProtectionModeSelection();
         ProtectionModeComboBox.IsEnabled = !_config.ProtectionLocked;
-        ModeDescriptionText.Text = previewMode
-            ? "真实执行全部启用规则，可立即启用、暂停和调整规则，不进入冷静期锁定。"
-            : "启用后立即锁定；暂停拦截、削弱规则或切换到预览模式都必须先完成冷静期解除。";
+        ModeDescriptionText.Text = _config.ProtectionMode switch
+        {
+            ProtectionMode.Preview => "真实执行全部启用规则，可立即启用、暂停和调整规则，不进入冷静期锁定。",
+            ProtectionMode.Negotiation => "启用后锁定规则和模式；管理员验证密码后，可为某个软件临时批准一段运行时间。",
+            _ => "启用后立即锁定；暂停拦截、削弱规则或切换模式都必须先完成冷静期解除。"
+        };
 
         DateTimeOffset nowUtc = DateTimeOffset.UtcNow;
         if (_config.UnlockAvailableAtUtc is { } availableAt)
@@ -136,7 +151,9 @@ public partial class MainWindow : Window
         }
         else if (_config.ProtectionLocked)
         {
-            UnlockStatusText.Text = $"严格模式已锁定。解除需要密码、确认文本和 {FormatDuration(TimeSpan.FromMinutes(_config.UnlockDelayMinutes))} 冷静期；解除前不能切换到预览模式。";
+            UnlockStatusText.Text = negotiationMode
+                ? $"协商模式已锁定。完整解除仍需要 {FormatDuration(TimeSpan.FromMinutes(_config.UnlockDelayMinutes))} 冷静期；临时放行软件不解除设置锁，但每次都要验证管理密码。"
+                : $"严格模式已锁定。解除需要密码、确认文本和 {FormatDuration(TimeSpan.FromMinutes(_config.UnlockDelayMinutes))} 冷静期；解除前不能切换模式。";
         }
         else if (previewMode)
         {
@@ -146,16 +163,23 @@ public partial class MainWindow : Window
         }
         else if (_config.ProtectionEnabled)
         {
-            UnlockStatusText.Text = "严格模式仍在拦截，但当前尚未锁定。可重新锁定、暂停拦截，或切换到预览屏蔽模式。";
+            UnlockStatusText.Text = negotiationMode
+                ? "协商模式正在拦截，但当前尚未锁定。可临时放行软件，也可重新锁定设置。"
+                : "严格模式仍在拦截，但当前尚未锁定。可重新锁定、暂停拦截，或切换模式。";
         }
         else
         {
-            UnlockStatusText.Text = "当前为默认严格模式。启用并锁定后，削弱保护或切换模式必须经过解除流程。";
+            UnlockStatusText.Text = negotiationMode
+                ? "协商模式尚未启用。启用并锁定后，管理员可在不解除设置锁的情况下临时放行软件。"
+                : "当前为默认严格模式。启用并锁定后，削弱保护或切换模式必须经过解除流程。";
         }
 
         EnableLockButton.Visibility = previewMode || _config.ProtectionLocked
             ? Visibility.Collapsed
             : Visibility.Visible;
+        EnableLockButton.Content = negotiationMode
+            ? "启用并锁定协商保护"
+            : "启用并锁定严格保护";
         EnableLockButton.IsEnabled = !_config.ProtectionLocked;
         EnablePreviewButton.Visibility = previewMode && !_config.ProtectionEnabled
             ? Visibility.Visible
@@ -173,8 +197,14 @@ public partial class MainWindow : Window
         DisableProtectionButton.Visibility = !_config.ProtectionLocked && _config.ProtectionEnabled
             ? Visibility.Visible
             : Visibility.Collapsed;
-        DisableProtectionButton.Content = previewMode ? "暂停预览屏蔽" : "暂停严格拦截";
+        DisableProtectionButton.Content = _config.ProtectionMode switch
+        {
+            ProtectionMode.Preview => "暂停预览屏蔽",
+            ProtectionMode.Negotiation => "暂停协商拦截",
+            _ => "暂停严格拦截"
+        };
         DisableProtectionButton.IsEnabled = !_config.ProtectionLocked && _config.ProtectionEnabled;
+        RefreshTemporaryReleaseDisplays(nowUtc);
 
         if (!UnlockDelayValueTextBox.IsKeyboardFocused)
         {
@@ -213,10 +243,19 @@ public partial class MainWindow : Window
         _rules.Clear();
         foreach (BlockRule rule in _config.Rules.OrderBy(rule => rule.CreatedAtUtc))
         {
-            _rules.Add(new RuleRow(rule));
+            _rules.Add(new RuleRow(rule, DateTimeOffset.UtcNow));
         }
 
         RefreshStatus(reloadConfig: false);
+    }
+
+    private void RefreshTemporaryReleaseDisplays(DateTimeOffset nowUtc)
+    {
+        foreach (RuleRow row in _rules)
+        {
+            BlockRule? rule = _config.Rules.FirstOrDefault(candidate => candidate.Id == row.Id);
+            row.UpdateTemporaryRelease(rule?.TemporarilyAllowedUntilUtc, nowUtc);
+        }
     }
 
     private void RefreshLogs(bool notifyNewBlocks = true, bool forceReload = false)
@@ -414,11 +453,17 @@ public partial class MainWindow : Window
         {
             ProtectionManager.ChangeMode(_config, mode);
             _configStore.Save(_config);
-            string message = mode == ProtectionMode.Preview
-                ? "已切换到预览屏蔽模式；规则会真实拦截，但可立即启停和修改。"
-                : _config.ProtectionEnabled
-                    ? "已切换到严格模式；当前拦截保持启用，点击“启用并锁定严格保护”后才会进入冷静期锁定。"
-                    : "已切换到严格模式；启用后将立即进入冷静期锁定。";
+            string message = mode switch
+            {
+                ProtectionMode.Preview => "已切换到预览屏蔽模式；规则会真实拦截，但可立即启停和修改。",
+                ProtectionMode.Negotiation when _config.ProtectionEnabled =>
+                    "已切换到协商模式；当前拦截保持启用，锁定后仍可由管理员按时长临时放行软件。",
+                ProtectionMode.Negotiation =>
+                    "已切换到协商模式；启用并锁定后，管理员可按时长临时放行软件。",
+                _ when _config.ProtectionEnabled =>
+                    "已切换到严格模式；当前拦截保持启用，点击“启用并锁定严格保护”后才会进入冷静期锁定。",
+                _ => "已切换到严格模式；启用后将立即进入冷静期锁定。"
+            };
             AppendAudit("ProtectionModeChanged", message, true);
             RefreshStatus(reloadConfig: false);
         }
@@ -441,7 +486,13 @@ public partial class MainWindow : Window
 
         ProtectionManager.EnableAndLock(_config);
         _configStore.Save(_config);
-        AppendAudit("StrictProtectionLocked", "严格模式已启用并锁定。", true);
+        bool negotiationMode = _config.ProtectionMode == ProtectionMode.Negotiation;
+        AppendAudit(
+            negotiationMode ? "NegotiationProtectionLocked" : "StrictProtectionLocked",
+            negotiationMode
+                ? "协商模式已启用并锁定；管理员可验证密码后临时放行软件。"
+                : "严格模式已启用并锁定。",
+            true);
         RefreshRules();
     }
 
@@ -525,12 +576,22 @@ public partial class MainWindow : Window
             return;
         }
 
-        bool previewMode = _config.ProtectionMode == ProtectionMode.Preview;
+        ProtectionMode mode = _config.ProtectionMode;
         ProtectionManager.DisableProtection(_config);
         _configStore.Save(_config);
         AppendAudit(
-            previewMode ? "PreviewProtectionDisabled" : "StrictProtectionDisabled",
-            previewMode ? "预览屏蔽已立即暂停。" : "严格模式拦截已暂停。",
+            mode switch
+            {
+                ProtectionMode.Preview => "PreviewProtectionDisabled",
+                ProtectionMode.Negotiation => "NegotiationProtectionDisabled",
+                _ => "StrictProtectionDisabled"
+            },
+            mode switch
+            {
+                ProtectionMode.Preview => "预览屏蔽已立即暂停。",
+                ProtectionMode.Negotiation => "协商模式拦截已暂停，临时放行记录已清除。",
+                _ => "严格模式拦截已暂停。"
+            },
             true);
         RefreshStatus(reloadConfig: false);
     }
@@ -1027,9 +1088,15 @@ public partial class MainWindow : Window
             return;
         }
 
+        bool clearedTemporaryRelease = rule.TemporarilyAllowedUntilUtc is not null;
         rule.Enabled = enable;
+        rule.TemporarilyAllowedUntilUtc = null;
         _configStore.Save(_config);
-        AppendAudit("RuleToggled", $"规则“{rule.Name}”已{(rule.Enabled ? "启用" : "停用")}。", true);
+        AppendAudit(
+            "RuleToggled",
+            $"规则“{rule.Name}”已{(rule.Enabled ? "启用" : "停用")}。"
+                + (clearedTemporaryRelease ? "原临时放行已清除。" : string.Empty),
+            true);
         RefreshRules();
     }
 
@@ -1057,6 +1124,157 @@ public partial class MainWindow : Window
         _config.Rules.Remove(rule);
         _configStore.Save(_config);
         AppendAudit("RuleDeleted", $"已删除规则“{rule.Name}”。", true);
+        RefreshRules();
+    }
+
+    private void GrantTemporaryReleaseButton_Click(object sender, RoutedEventArgs e)
+    {
+        ReloadConfig();
+        if (_config.ProtectionMode != ProtectionMode.Negotiation)
+        {
+            MessageBox.Show(
+                "请先切换到协商模式。严格模式不允许绕过规则，预览模式可直接调整规则。",
+                "临时放行软件",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        if (!_config.ProtectionEnabled)
+        {
+            MessageBox.Show(
+                "请先启用协商保护。",
+                "临时放行软件",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        if (RulesDataGrid.SelectedItem is not RuleRow selected)
+        {
+            MessageBox.Show(
+                "请先选择一条软件规则。",
+                "临时放行软件",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        BlockRule? selectedRule = _config.Rules.FirstOrDefault(
+            candidate => candidate.Id == selected.Id);
+        if (selectedRule is null)
+        {
+            RefreshRules();
+            return;
+        }
+
+        if (!selectedRule.Enabled
+            || selectedRule.Target is not (RuleTarget.FileName or RuleTarget.FullPath))
+        {
+            MessageBox.Show(
+                selectedRule.Enabled
+                    ? "网站规则不能临时放行；请选择程序文件名或完整路径规则。"
+                    : "只有已启用的软件规则才能临时放行。",
+                "临时放行软件",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new TemporaryReleaseWindow(
+            selectedRule.Name,
+            _config.NegotiationDefaultReleaseMinutes)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        string durationDisplay = FormatDuration(TimeSpan.FromMinutes(dialog.DurationMinutes));
+        if (!AuthenticateForAction(
+                $"临时放行“{selectedRule.Name}” {durationDisplay}"))
+        {
+            RefreshStatus(reloadConfig: false);
+            return;
+        }
+
+        try
+        {
+            BlockRule? currentRule = _config.Rules.FirstOrDefault(
+                candidate => candidate.Id == selected.Id);
+            if (currentRule is null)
+            {
+                RefreshRules();
+                return;
+            }
+
+            DateTimeOffset allowedUntilUtc = ProtectionManager.GrantTemporaryRelease(
+                _config,
+                currentRule.Id,
+                dialog.DurationMinutes,
+                DateTimeOffset.UtcNow);
+            _configStore.Save(_config);
+            AppendAudit(
+                "TemporaryReleaseGranted",
+                $"已临时放行软件规则“{currentRule.Name}” {durationDisplay}，至 {allowedUntilUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}。",
+                true);
+            RefreshRules();
+            MessageBox.Show(
+                $"“{currentRule.Name}”已临时放行至 {allowedUntilUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}。\n\n到期后会自动恢复拦截。",
+                "临时放行软件",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception) when (
+            exception is InvalidOperationException or ArgumentOutOfRangeException)
+        {
+            AppendAudit("TemporaryReleaseRejected", exception.Message, false);
+            MessageBox.Show(
+                exception.Message,
+                "临时放行软件",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            RefreshRules();
+        }
+    }
+
+    private void RevokeTemporaryReleaseButton_Click(object sender, RoutedEventArgs e)
+    {
+        ReloadConfig();
+        if (RulesDataGrid.SelectedItem is not RuleRow selected)
+        {
+            MessageBox.Show(
+                "请先选择一条软件规则。",
+                "收回临时放行",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        BlockRule? rule = _config.Rules.FirstOrDefault(candidate => candidate.Id == selected.Id);
+        if (rule is null)
+        {
+            RefreshRules();
+            return;
+        }
+
+        if (!ProtectionManager.RevokeTemporaryRelease(_config, rule.Id))
+        {
+            MessageBox.Show(
+                "这条规则当前没有临时放行记录。",
+                "收回临时放行",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        _configStore.Save(_config);
+        AppendAudit(
+            "TemporaryReleaseRevoked",
+            $"已立即收回软件规则“{rule.Name}”的临时放行。",
+            true);
         RefreshRules();
     }
 
@@ -1166,13 +1384,16 @@ public partial class MainWindow : Window
         }
 
         string previous = $"{rule.Name} / {rule.Target} / {rule.Pattern}";
+        bool clearedTemporaryRelease = rule.TemporarilyAllowedUntilUtc is not null;
         rule.Name = candidate.Name;
         rule.Target = candidate.Target;
         rule.Pattern = candidate.Pattern;
+        rule.TemporarilyAllowedUntilUtc = null;
         _configStore.Save(_config);
         AppendAudit(
             "RuleModified",
-            $"已修改规则：{previous} → {rule.Name} / {rule.Target} / {rule.Pattern}",
+            $"已修改规则：{previous} → {rule.Name} / {rule.Target} / {rule.Pattern}"
+                + (clearedTemporaryRelease ? "；原临时放行已清除。" : string.Empty),
             true);
         RefreshRules();
     }
@@ -1568,9 +1789,12 @@ public partial class MainWindow : Window
         ShortcutTargetInfo Shortcut,
         BlockRule Rule);
 
-    private sealed class RuleRow
+    private sealed class RuleRow : INotifyPropertyChanged
     {
-        public RuleRow(BlockRule rule)
+        private readonly bool _supportsTemporaryRelease;
+        private string _temporaryReleaseDisplay = "—";
+
+        public RuleRow(BlockRule rule, DateTimeOffset nowUtc)
         {
             Id = rule.Id;
             Name = rule.Name;
@@ -1584,14 +1808,56 @@ public partial class MainWindow : Window
             Pattern = rule.Pattern;
             IsEnabled = rule.Enabled;
             CreatedDisplay = rule.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            _supportsTemporaryRelease = rule.Target is RuleTarget.FileName or RuleTarget.FullPath;
+            UpdateTemporaryRelease(rule.TemporarilyAllowedUntilUtc, nowUtc);
         }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
 
         public string Id { get; }
         public string Name { get; }
         public string TargetDisplay { get; }
         public string Pattern { get; }
         public bool IsEnabled { get; set; }
+        public string TemporaryReleaseDisplay
+        {
+            get => _temporaryReleaseDisplay;
+            private set
+            {
+                if (string.Equals(_temporaryReleaseDisplay, value, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                _temporaryReleaseDisplay = value;
+                PropertyChanged?.Invoke(
+                    this,
+                    new PropertyChangedEventArgs(nameof(TemporaryReleaseDisplay)));
+            }
+        }
         public string CreatedDisplay { get; }
+
+        public void UpdateTemporaryRelease(
+            DateTimeOffset? allowedUntilUtc,
+            DateTimeOffset nowUtc)
+        {
+            if (!_supportsTemporaryRelease)
+            {
+                TemporaryReleaseDisplay = "不适用";
+                return;
+            }
+
+            if (allowedUntilUtc is not { } allowedUntil)
+            {
+                TemporaryReleaseDisplay = "—";
+                return;
+            }
+
+            TimeSpan remaining = allowedUntil - nowUtc;
+            TemporaryReleaseDisplay = remaining > TimeSpan.Zero
+                ? $"剩余 {FormatDuration(remaining)}（至 {allowedUntil.ToLocalTime():HH:mm}）"
+                : "已到期";
+        }
     }
 
     private sealed class AuditRow
@@ -1610,8 +1876,13 @@ public partial class MainWindow : Window
                 "ProtectionModeChangeRejected" => "模式切换被拒绝",
                 "StrictProtectionLocked" => "严格模式锁定",
                 "StrictProtectionDisabled" => "严格模式暂停",
+                "NegotiationProtectionLocked" => "协商模式锁定",
+                "NegotiationProtectionDisabled" => "协商模式暂停",
                 "PreviewProtectionEnabled" => "预览屏蔽启用",
                 "PreviewProtectionDisabled" => "预览屏蔽暂停",
+                "TemporaryReleaseGranted" => "临时放行",
+                "TemporaryReleaseRevoked" => "收回放行",
+                "TemporaryReleaseRejected" => "临时放行失败",
                 "ShortcutRulesAdded" => "快捷方式规则",
                 _ => entry.EventType
             };

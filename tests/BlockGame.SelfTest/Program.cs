@@ -26,6 +26,7 @@ internal static class Program
             ("快捷方式生成规则", ShortcutRuleFromLnk),
             ("开机静默启动参数", AutoStartArguments),
             ("预览与严格模式状态机", ProtectionModes),
+            ("协商模式临时放行", NegotiationTemporaryRelease),
             ("旧配置默认严格模式", LegacyConfigDefaultsToStrict),
             ("恢复默认设置", RestoreDefaults),
             ("冷静期单位换算", UnlockDelayUnitConversion),
@@ -813,6 +814,129 @@ internal static class Program
             "冷静期结束并完成解除后仍无法切换到预览模式。 ");
     }
 
+    private static void NegotiationTemporaryRelease()
+    {
+        Assert(
+            TemporaryReleasePolicy.TryConvertToMinutes(
+                1.5,
+                TemporaryReleaseUnit.Hours,
+                out int convertedMinutes)
+            && convertedMinutes == 90,
+            "协商模式放行时长单位换算不正确。 ");
+        Assert(
+            !TemporaryReleasePolicy.TryConvertToMinutes(
+                25,
+                TemporaryReleaseUnit.Hours,
+                out _),
+            "协商模式允许了超过 24 小时的放行时长。 ");
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var rule = new BlockRule
+        {
+            Name = "Test Game",
+            Target = RuleTarget.FileName,
+            Pattern = "game.exe",
+            Enabled = true
+        };
+        var config = new AppConfig
+        {
+            ProtectionMode = ProtectionMode.Negotiation,
+            Rules = [rule]
+        };
+
+        ProtectionManager.EnableAndLock(config);
+        Assert(
+            config.ProtectionMode == ProtectionMode.Negotiation
+                && config.ProtectionEnabled
+                && config.ProtectionLocked,
+            "协商模式启用锁定时被错误切回严格模式。 ");
+
+        DateTimeOffset allowedUntil = ProtectionManager.GrantTemporaryRelease(
+            config,
+            rule.Id,
+            45,
+            now);
+        Assert(allowedUntil == now.AddMinutes(45), "临时放行截止时间不正确。 ");
+        Assert(config.NegotiationDefaultReleaseMinutes == 45, "临时放行时长没有记住。 ");
+        Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(2001, "game.exe", null),
+                now.AddMinutes(44)) is null,
+            "临时放行期间软件仍被规则命中。 ");
+        Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(2002, "game.exe", null),
+                now.AddMinutes(46)) is not null,
+            "临时放行到期后软件仍被放行。 ");
+
+        Assert(
+            ProtectionManager.RevokeTemporaryRelease(config, rule.Id),
+            "无法主动收回临时放行。 ");
+        Assert(
+            RuleMatcher.Match(
+                config,
+                new ProcessDescriptor(2003, "game.exe", null),
+                now.AddMinutes(1)) is not null,
+            "主动收回临时放行后规则没有恢复。 ");
+
+        var strictConfig = new AppConfig
+        {
+            ProtectionMode = ProtectionMode.Strict,
+            ProtectionEnabled = true,
+            Rules = [new BlockRule { Name = "Strict", Pattern = "strict.exe" }]
+        };
+        bool strictRejected = false;
+        try
+        {
+            ProtectionManager.GrantTemporaryRelease(
+                strictConfig,
+                strictConfig.Rules[0].Id,
+                30,
+                now);
+        }
+        catch (InvalidOperationException)
+        {
+            strictRejected = true;
+        }
+        Assert(strictRejected, "严格模式错误地允许临时放行。 ");
+
+        var domainRule = new BlockRule
+        {
+            Name = "Website",
+            Target = RuleTarget.Domain,
+            Pattern = "example.com"
+        };
+        var domainConfig = new AppConfig
+        {
+            ProtectionMode = ProtectionMode.Negotiation,
+            ProtectionEnabled = true,
+            Rules = [domainRule]
+        };
+        bool domainRejected = false;
+        try
+        {
+            ProtectionManager.GrantTemporaryRelease(
+                domainConfig,
+                domainRule.Id,
+                30,
+                now);
+        }
+        catch (InvalidOperationException)
+        {
+            domainRejected = true;
+        }
+        Assert(domainRejected, "网站规则错误地允许临时放行。 ");
+
+        config.ProtectionLocked = false;
+        ProtectionManager.GrantTemporaryRelease(config, rule.Id, 30, now);
+        ProtectionManager.ChangeMode(config, ProtectionMode.Strict);
+        Assert(
+            rule.TemporarilyAllowedUntilUtc is null,
+            "离开协商模式后没有清除临时放行。 ");
+    }
+
     private static void LegacyConfigDefaultsToStrict()
     {
         string root = Path.Combine(Path.GetTempPath(), "BlockGameSelfTest", Guid.NewGuid().ToString("N"));
@@ -849,7 +973,23 @@ internal static class Program
             AppConfig inconsistent = new ConfigStore(paths).Load();
             Assert(
                 inconsistent.ProtectionMode == ProtectionMode.Strict,
-                "锁定配置没有被规范为严格模式。 ");
+                "锁定的预览配置没有被规范为严格模式。 ");
+
+            File.WriteAllText(
+                paths.ConfigFile,
+                """
+                {
+                  "SchemaVersion": 1,
+                  "ProtectionMode": "Negotiation",
+                  "ProtectionEnabled": true,
+                  "ProtectionLocked": true,
+                  "Rules": []
+                }
+                """);
+            AppConfig negotiation = new ConfigStore(paths).Load();
+            Assert(
+                negotiation.ProtectionMode == ProtectionMode.Negotiation,
+                "锁定的协商模式被错误迁移为严格模式。 ");
         }
         finally
         {
@@ -874,6 +1014,7 @@ internal static class Program
             ProtectionEnabled = true,
             ProtectionLocked = false,
             UnlockDelayMinutes = 60,
+            NegotiationDefaultReleaseMinutes = 90,
             UnlockRequestedAtUtc = DateTimeOffset.UtcNow,
             UnlockAvailableAtUtc = DateTimeOffset.UtcNow.AddDays(1),
             UninstallTokenHashBase64 = "token",
@@ -892,6 +1033,9 @@ internal static class Program
         Assert(!config.ProtectionLocked, "恢复默认设置后仍处于锁定。 ");
         Assert(config.ProtectionMode == ProtectionMode.Strict, "恢复默认设置未切回严格模式。 ");
         Assert(config.UnlockDelayMinutes == 24 * 60, "恢复默认设置未还原 24 小时冷静期。 ");
+        Assert(
+            config.NegotiationDefaultReleaseMinutes == TemporaryReleasePolicy.DefaultDurationMinutes,
+            "恢复默认设置未还原协商模式默认放行时长。 ");
         Assert(config.UnlockRequestedAtUtc is null && config.UnlockAvailableAtUtc is null, "恢复默认设置未清除解除申请。 ");
         Assert(config.UninstallTokenHashBase64 is null && config.UninstallAuthorizedUntilUtc is null, "恢复默认设置未清除卸载授权。 ");
         Assert(config.PasswordThrottle.ConsecutiveFailures == 0, "恢复默认设置未清除密码限流。 ");

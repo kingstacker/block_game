@@ -371,6 +371,7 @@ internal sealed class GuardWorker
 
     private void ScanAndBlock(AppConfig config)
     {
+        DateTimeOffset scanStartedUtc = DateTimeOffset.UtcNow;
         bool hasFileNameRules = config.Rules.Any(
             rule => rule.Enabled && rule.Target == RuleTarget.FileName);
         bool hasFullPathRules = config.Rules.Any(
@@ -411,7 +412,7 @@ internal sealed class GuardWorker
 
                 string fileName = SafetyPolicy.NormalizeFileName(processName);
                 var descriptor = new ProcessDescriptor(processId, fileName, null);
-                RuleMatch? match = RuleMatcher.Match(config, descriptor);
+                RuleMatch? match = RuleMatcher.Match(config, descriptor, scanStartedUtc);
                 if (match is null
                     && (hasFileNameRules || hasFullPathRules)
                     && !SafetyPolicy.IsProtectedSystemProcess(descriptor))
@@ -425,7 +426,7 @@ internal sealed class GuardWorker
                         ProductName = metadata.ProductName,
                         FileDescription = metadata.FileDescription
                     };
-                    match = RuleMatcher.Match(config, descriptor);
+                    match = RuleMatcher.Match(config, descriptor, scanStartedUtc);
                 }
 
                 if (match is null)

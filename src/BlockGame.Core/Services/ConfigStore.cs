@@ -39,10 +39,20 @@ public sealed class ConfigStore
         config.Rules ??= [];
         config.Password ??= new PasswordCredential();
         config.PasswordThrottle ??= new PasswordThrottle();
-        if (!Enum.IsDefined(config.ProtectionMode) || config.ProtectionLocked)
+        config.NegotiationDefaultReleaseMinutes = TemporaryReleasePolicy.NormalizeDurationMinutes(
+            config.NegotiationDefaultReleaseMinutes);
+        if (!Enum.IsDefined(config.ProtectionMode)
+            || config.ProtectionLocked && config.ProtectionMode == ProtectionMode.Preview)
         {
-            // 旧配置没有模式字段时枚举默认值即为 Strict；锁定状态也必须始终归属严格模式。
+            // 旧配置没有模式字段时枚举默认值即为 Strict；预览模式绝不能处于锁定状态。
             config.ProtectionMode = ProtectionMode.Strict;
+        }
+        if (config.ProtectionMode != ProtectionMode.Negotiation)
+        {
+            foreach (BlockRule rule in config.Rules)
+            {
+                rule.TemporarilyAllowedUntilUtc = null;
+            }
         }
         return config;
     }

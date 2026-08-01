@@ -4,7 +4,10 @@ namespace BlockGame.Core.Services;
 
 public static class RuleMatcher
 {
-    public static RuleMatch? Match(AppConfig config, ProcessDescriptor process)
+    public static RuleMatch? Match(
+        AppConfig config,
+        ProcessDescriptor process,
+        DateTimeOffset? nowUtc = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(process);
@@ -15,8 +18,17 @@ public static class RuleMatcher
         }
 
         IReadOnlyList<string> fileNameCandidates = BuildFileNameCandidates(process);
+        DateTimeOffset effectiveNowUtc = nowUtc ?? DateTimeOffset.UtcNow;
         foreach (BlockRule rule in config.Rules.Where(candidate => candidate.Enabled))
         {
+            if (TemporaryReleasePolicy.IsRuleTemporarilyAllowed(
+                    config,
+                    rule,
+                    effectiveNowUtc))
+            {
+                continue;
+            }
+
             bool matched = rule.Target switch
             {
                 RuleTarget.FileName => SafetyPolicy.SplitFileNamePatterns(rule.Pattern)

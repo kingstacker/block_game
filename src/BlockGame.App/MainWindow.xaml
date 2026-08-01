@@ -62,6 +62,7 @@
                                               x:Name="ProtectionModeComboBox"
                                               SelectionChanged="ProtectionModeComboBox_SelectionChanged">
                                         <ComboBoxItem Content="严格模式（默认）" Tag="Strict" />
+                                        <ComboBoxItem Content="协商模式" Tag="Negotiation" />
                                         <ComboBoxItem Content="预览屏蔽模式" Tag="Preview" />
                                     </ComboBox>
                                     <TextBlock Grid.Column="2"
@@ -228,6 +229,8 @@
                         <DataGrid.ContextMenu>
                             <ContextMenu>
                                 <MenuItem Header="修改规则" Click="EditRuleMenuItem_Click" />
+                                <MenuItem Header="临时放行软件…" Click="GrantTemporaryReleaseButton_Click" />
+                                <MenuItem Header="立即收回临时放行" Click="RevokeTemporaryReleaseButton_Click" />
                                 <Separator />
                                 <MenuItem Header="删除规则" Click="DeleteRuleButton_Click" />
                             </ContextMenu>
@@ -247,6 +250,7 @@
                             <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="1.2*" IsReadOnly="True" />
                             <DataGridTextColumn Header="类型" Binding="{Binding TargetDisplay}" Width="130" IsReadOnly="True" />
                             <DataGridTextColumn Header="匹配内容" Binding="{Binding Pattern}" Width="2.5*" IsReadOnly="True" />
+                            <DataGridTextColumn Header="临时放行" Binding="{Binding TemporaryReleaseDisplay}" Width="170" IsReadOnly="True" />
                             <DataGridTextColumn Header="创建时间" Binding="{Binding CreatedDisplay}" Width="150" IsReadOnly="True" />
                         </DataGrid.Columns>
                     </DataGrid>
@@ -254,8 +258,10 @@
                     <WrapPanel Grid.Row="2" Margin="0,14,0,0">
                         <Button Style="{StaticResource SecondaryButton}" Content="导入规则" Click="ImportRulesButton_Click" />
                         <Button Style="{StaticResource SecondaryButton}" Content="导出规则" Click="ExportRulesButton_Click" />
+                        <Button Style="{StaticResource PrimaryButton}" Content="临时放行选中软件" Click="GrantTemporaryReleaseButton_Click" />
+                        <Button Style="{StaticResource SecondaryButton}" Content="收回临时放行" Click="RevokeTemporaryReleaseButton_Click" />
                         <Button Style="{StaticResource DangerButton}" Content="删除选中规则" Click="DeleteRuleButton_Click" />
-                        <TextBlock Margin="8,9,0,0" Foreground="{StaticResource MutedTextBrush}" Text="导入会跳过重复规则；锁定期间不能导入、修改、停用或删除。" />
+                        <TextBlock Margin="8,9,0,0" Foreground="{StaticResource MutedTextBrush}" Text="锁定期间不能修改规则；协商模式仍可为软件规则临时放行。" />
                     </WrapPanel>
                 </Grid>
             </TabItem>

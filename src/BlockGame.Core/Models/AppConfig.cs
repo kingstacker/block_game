@@ -2,7 +2,7 @@ namespace BlockGame.Core.Models;
 
 public sealed class AppConfig
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -19,6 +19,8 @@ public sealed class AppConfig
     public bool ProtectionLocked { get; set; }
 
     public int UnlockDelayMinutes { get; set; } = 24 * 60;
+
+    public int NegotiationDefaultReleaseMinutes { get; set; } = 30;
 
     public DateTimeOffset? UnlockRequestedAtUtc { get; set; }
 

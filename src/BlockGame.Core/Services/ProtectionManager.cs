@@ -9,7 +9,10 @@ public static class ProtectionManager
     public static void EnableAndLock(AppConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        config.ProtectionMode = ProtectionMode.Strict;
+        if (config.ProtectionMode == ProtectionMode.Preview)
+        {
+            config.ProtectionMode = ProtectionMode.Strict;
+        }
         config.ProtectionEnabled = true;
         config.ProtectionLocked = true;
         config.UnlockRequestedAtUtc = null;
@@ -27,9 +30,10 @@ public static class ProtectionManager
 
         if (config.ProtectionLocked && config.ProtectionMode != mode)
         {
-            throw new InvalidOperationException("严格模式已锁定，必须等待冷静期结束并完成解除后才能切换模式。 ");
+            throw new InvalidOperationException("当前保护模式已锁定，必须等待冷静期结束并完成解除后才能切换模式。 ");
         }
 
+        ClearTemporaryReleases(config);
         config.ProtectionMode = mode;
         ClearUninstallAuthorization(config);
     }
@@ -39,7 +43,7 @@ public static class ProtectionManager
         ArgumentNullException.ThrowIfNull(config);
         if (config.ProtectionLocked)
         {
-            throw new InvalidOperationException("严格模式已锁定，必须先完成解除流程。 ");
+            throw new InvalidOperationException("当前保护模式已锁定，必须先完成解除流程。 ");
         }
 
         if (config.ProtectionMode != ProtectionMode.Preview)
@@ -149,7 +153,66 @@ public static class ProtectionManager
         }
 
         config.ProtectionEnabled = false;
+        ClearTemporaryReleases(config);
         ClearUninstallAuthorization(config);
+    }
+
+    public static DateTimeOffset GrantTemporaryRelease(
+        AppConfig config,
+        string ruleId,
+        int durationMinutes,
+        DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (config.ProtectionMode != ProtectionMode.Negotiation)
+        {
+            throw new InvalidOperationException("只有协商模式可以临时放行软件。 ");
+        }
+
+        if (!config.ProtectionEnabled)
+        {
+            throw new InvalidOperationException("请先启用协商保护，再临时放行软件。 ");
+        }
+
+        if (durationMinutes is < 1 or > TemporaryReleasePolicy.MaximumDurationMinutes)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(durationMinutes),
+                $"临时放行时长必须在 1 分钟到 {TemporaryReleasePolicy.MaximumDurationMinutes / 60} 小时之间。 ");
+        }
+
+        BlockRule rule = config.Rules.FirstOrDefault(candidate => candidate.Id == ruleId)
+            ?? throw new InvalidOperationException("找不到要临时放行的规则。 ");
+        if (!rule.Enabled)
+        {
+            throw new InvalidOperationException("只有已启用的规则才能临时放行。 ");
+        }
+
+        if (rule.Target is not (RuleTarget.FileName or RuleTarget.FullPath))
+        {
+            throw new InvalidOperationException("临时放行只适用于软件规则，不适用于网站规则。 ");
+        }
+
+        DateTimeOffset allowedUntilUtc = nowUtc.AddMinutes(durationMinutes);
+        rule.TemporarilyAllowedUntilUtc = allowedUntilUtc;
+        config.NegotiationDefaultReleaseMinutes = durationMinutes;
+        ClearUninstallAuthorization(config);
+        return allowedUntilUtc;
+    }
+
+    public static bool RevokeTemporaryRelease(AppConfig config, string ruleId)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        BlockRule rule = config.Rules.FirstOrDefault(candidate => candidate.Id == ruleId)
+            ?? throw new InvalidOperationException("找不到要收回临时放行的规则。 ");
+        if (rule.TemporarilyAllowedUntilUtc is null)
+        {
+            return false;
+        }
+
+        rule.TemporarilyAllowedUntilUtc = null;
+        ClearUninstallAuthorization(config);
+        return true;
     }
 
     public static void RestoreDefaults(AppConfig config)
@@ -166,6 +229,7 @@ public static class ProtectionManager
         config.UnlockRequestedAtUtc = null;
         config.UnlockAvailableAtUtc = null;
         config.UnlockDelayMinutes = 24 * 60;
+        config.NegotiationDefaultReleaseMinutes = TemporaryReleasePolicy.DefaultDurationMinutes;
         config.PasswordThrottle = new PasswordThrottle();
         config.Rules.Clear();
         config.DefaultRulePresetVersion = 0;
@@ -181,5 +245,13 @@ public static class ProtectionManager
     {
         config.UninstallTokenHashBase64 = null;
         config.UninstallAuthorizedUntilUtc = null;
+    }
+
+    private static void ClearTemporaryReleases(AppConfig config)
+    {
+        foreach (BlockRule rule in config.Rules)
+        {
+            rule.TemporarilyAllowedUntilUtc = null;
+        }
     }
 }

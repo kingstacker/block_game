@@ -1,0 +1,51 @@
+<Window x:Class="BlockGame.App.TemporaryReleaseWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="临时放行软件"
+        Width="520"
+        Height="330"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="临时放行软件"
+                       FontSize="23"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource TextBrush}" />
+            <TextBlock x:Name="RuleDescriptionText"
+                       Margin="0,7,0,0"
+                       TextWrapping="Wrap"
+                       Foreground="{StaticResource MutedTextBrush}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,24,0,0">
+            <TextBlock Text="允许运行时长" Margin="0,0,0,7" />
+            <DockPanel LastChildFill="False">
+                <TextBox x:Name="DurationValueTextBox" Width="150" />
+                <ComboBox x:Name="DurationUnitComboBox"
+                          Width="100"
+                          Margin="10,0,0,0"
+                          SelectionChanged="DurationUnitComboBox_SelectionChanged">
+                    <ComboBoxItem Content="分钟" Tag="Minutes" />
+                    <ComboBoxItem Content="小时" Tag="Hours" />
+                </ComboBox>
+            </DockPanel>
+            <TextBlock Margin="0,13,0,0"
+                       Text="确认后立即开始按自然时间倒计时，最长 24 小时；到期后，仍在运行的软件会再次被拦截。"
+                       TextWrapping="Wrap"
+                       LineHeight="22"
+                       Foreground="{StaticResource MutedTextBrush}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Style="{StaticResource SecondaryButton}" Content="取消" Click="CancelButton_Click" />
+            <Button Style="{StaticResource PrimaryButton}" Margin="0" Content="下一步：验证密码" Click="ConfirmButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

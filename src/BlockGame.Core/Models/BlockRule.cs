@@ -12,6 +12,8 @@ public sealed class BlockRule
 
     public bool Enabled { get; set; } = true;
 
+    public DateTimeOffset? TemporarilyAllowedUntilUtc { get; set; }
+
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
 }
 
