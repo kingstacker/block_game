@@ -50,6 +50,8 @@ $guardExe = Join-Path $installDir 'BlockGame.Guard.exe'
 $tokenFile = Join-Path $dataDir 'uninstall.token'
 $maintenanceStopFile = Join-Path $dataDir 'maintenance-stop.request'
 $serviceName = 'BlockGameGuard'
+$serviceWatchdogTaskName = 'BlockGameGuardWatchdog'
+$serviceRecoveryTaskName = 'BlockGameGuardRecovery'
 
 $expectedInstall = [IO.Path]::GetFullPath((Join-Path $nativeProgramFiles 'BlockGame'))
 $expectedData = [IO.Path]::GetFullPath((Join-Path ${env:ProgramData} 'BlockGame'))
@@ -92,6 +94,24 @@ Get-Process -Name 'BlockGame.App' -ErrorAction SilentlyContinue |
 Get-Process -Name 'BlockGame.DropBridge' -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
+$scheduledTaskTool = Join-Path $env:SystemRoot 'System32\schtasks.exe'
+if (Test-Path -LiteralPath $scheduledTaskTool) {
+    foreach ($taskName in @($serviceWatchdogTaskName, $serviceRecoveryTaskName)) {
+        Start-Process `
+            -FilePath $scheduledTaskTool `
+            -ArgumentList @('/End', '/TN', $taskName) `
+            -WindowStyle Hidden `
+            -Wait `
+            -ErrorAction SilentlyContinue
+        Start-Process `
+            -FilePath $scheduledTaskTool `
+            -ArgumentList @('/Delete', '/TN', $taskName, '/F') `
+            -WindowStyle Hidden `
+            -Wait `
+            -ErrorAction SilentlyContinue
+    }
+}
+
 Set-Content -LiteralPath $maintenanceStopFile -Value ([Guid]::NewGuid().ToString('N')) -Encoding ASCII
 try {
     Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
@@ -100,7 +120,6 @@ finally {
     Remove-Item -LiteralPath $maintenanceStopFile -Force -ErrorAction SilentlyContinue
 }
 & sc.exe delete $serviceName | Out-Null
-$scheduledTaskTool = Join-Path $env:SystemRoot 'System32\schtasks.exe'
 if (Test-Path -LiteralPath $scheduledTaskTool) {
     # schtasks writes "task not found" to stderr. Start it separately so an
     # already-missing optional startup task does not abort the whole uninstall.

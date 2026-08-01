@@ -15,6 +15,8 @@ internal static class GuardServiceInstaller
 {
     private const string ServiceName = "BlockGameGuard";
     private const string AutoStartTaskName = "BlockGameAutoStart";
+    private const string ServiceWatchdogTaskName = "BlockGameGuardWatchdog";
+    private const string ServiceRecoveryTaskName = "BlockGameGuardRecovery";
     private const uint ScManagerConnect = 0x0001;
     private const uint ScManagerCreateService = 0x0002;
     private const uint ServiceQueryStatus = 0x0004;
@@ -59,6 +61,7 @@ internal static class GuardServiceInstaller
             if (updateSourceExecutable is not null
                 && !GuardFilesMatch(Path.GetDirectoryName(updateSourceExecutable)!, installDirectory))
             {
+                RemoveServiceWatchdog();
                 if (!TryStopService(paths.MaintenanceStopFile, out string stopMessage))
                 {
                     return new GuardInstallResult(false, false, "更新后台守护服务失败：" + stopMessage);
@@ -81,6 +84,10 @@ internal static class GuardServiceInstaller
 
             ConfigureRecovery();
             EnsureAutoStart();
+            if (!EnsureServiceWatchdog(targetExecutable, out string watchdogMessage))
+            {
+                return new GuardInstallResult(false, false, watchdogMessage);
+            }
             if (!TryStartService(out string startMessage))
             {
                 return new GuardInstallResult(false, false, startMessage);
@@ -117,6 +124,10 @@ internal static class GuardServiceInstaller
 
             ConfigureRecovery();
             EnsureAutoStart();
+            if (!EnsureServiceWatchdog(targetExecutable, out string watchdogMessage))
+            {
+                return new GuardInstallResult(false, true, watchdogMessage);
+            }
             if (!TryStartService(out string startMessage))
             {
                 return new GuardInstallResult(false, true, startMessage);
@@ -178,6 +189,14 @@ internal static class GuardServiceInstaller
         // 无论服务是否在跑，都补刷一次恢复配置，防止它被 sc failure 清空。
         ConfigureRecovery();
         EnsureAutoStart();
+        string watchdogExecutable = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            DataPaths.ProductDirectoryName,
+            "BlockGame.Guard.exe");
+        if (!EnsureServiceWatchdog(watchdogExecutable, out string watchdogMessage))
+        {
+            return new GuardHealthResult(false, true, watchdogMessage);
+        }
 
         if (TryQueryServiceState(out int state) && state == ServiceRunning)
         {
@@ -629,6 +648,93 @@ internal static class GuardServiceInstaller
                 or System.ComponentModel.Win32Exception)
         {
             // 自启注册失败不应阻断服务安装;下次启动会再次尝试。
+        }
+    }
+
+    private static bool EnsureServiceWatchdog(
+        string guardExecutable,
+        out string message)
+    {
+        string scheduledTaskTool = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
+        CommandResult watchdogQuery = RunProcess(
+            scheduledTaskTool,
+            "/Query",
+            "/TN",
+            ServiceWatchdogTaskName);
+        if (watchdogQuery.ExitCode != 0)
+        {
+            string watchdogCommand = $"\"{guardExecutable}\" --watch-service";
+            CommandResult watchdogCreate = RunProcess(
+                scheduledTaskTool,
+                "/Create",
+                "/TN",
+                ServiceWatchdogTaskName,
+                "/TR",
+                watchdogCommand,
+                "/SC",
+                "MINUTE",
+                "/MO",
+                "1",
+                "/RU",
+                "SYSTEM",
+                "/RL",
+                "HIGHEST",
+                "/F");
+            if (watchdogCreate.ExitCode != 0)
+            {
+                message = "注册常驻守护服务看门狗失败：" + watchdogCreate.Output.Trim();
+                return false;
+            }
+
+            _ = RunProcess(
+                scheduledTaskTool,
+                "/Run",
+                "/TN",
+                ServiceWatchdogTaskName);
+        }
+
+        CommandResult recoveryQuery = RunProcess(
+            scheduledTaskTool,
+            "/Query",
+            "/TN",
+            ServiceRecoveryTaskName);
+        if (recoveryQuery.ExitCode != 0)
+        {
+            string recoveryCommand = $"\"{guardExecutable}\" --ensure-service-running";
+            CommandResult recoveryCreate = RunProcess(
+                scheduledTaskTool,
+                "/Create",
+                "/TN",
+                ServiceRecoveryTaskName,
+                "/TR",
+                recoveryCommand,
+                "/SC",
+                "MINUTE",
+                "/MO",
+                "1",
+                "/RU",
+                "SYSTEM",
+                "/RL",
+                "HIGHEST",
+                "/F");
+            if (recoveryCreate.ExitCode != 0)
+            {
+                message = "注册守护服务分钟恢复任务失败：" + recoveryCreate.Output.Trim();
+                return false;
+            }
+        }
+
+        message = "独立守护服务看门狗已注册。 ";
+        return true;
+    }
+
+    private static void RemoveServiceWatchdog()
+    {
+        string scheduledTaskTool = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
+        foreach (string taskName in new[] { ServiceWatchdogTaskName, ServiceRecoveryTaskName })
+        {
+            _ = RunProcess(scheduledTaskTool, "/End", "/TN", taskName);
+            _ = RunProcess(scheduledTaskTool, "/Delete", "/TN", taskName, "/F");
         }
     }
 

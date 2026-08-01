@@ -14,6 +14,17 @@ internal static class Program
 
         try
         {
+            if (args.Contains("--watch-service", StringComparer.OrdinalIgnoreCase))
+            {
+                ServiceWatchdog.RunContinuouslyAsync().GetAwaiter().GetResult();
+                return 0;
+            }
+
+            if (args.Contains("--ensure-service-running", StringComparer.OrdinalIgnoreCase))
+            {
+                return ServiceWatchdog.EnsureServiceRunning();
+            }
+
             if (args.Contains("--service", StringComparer.OrdinalIgnoreCase))
             {
                 WindowsServiceHost.Run(

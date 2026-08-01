@@ -1,4 +1,4 @@
-# BlockGame v0.1.3
+# BlockGame v0.1.4
 
 BlockGame 是一个面向 Windows 11 的自我约束工具。它通过后台守护程序监控进程启动，匹配规则后立即终止程序，并用管理密码、解除冷静期和一次性卸载令牌增加绕过阻力。
 
@@ -73,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 正式发布包默认包含 Windows x64 自带运行时版本，目标电脑无需另装 .NET：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 0.1.3
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 0.1.4
 ```
 
 构建完成后发布以下两个文件：
@@ -91,7 +91,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 
 4. 确认规则有效后，可选择“严格模式”或“协商模式”并启用锁定；协商模式允许管理员在规则页为选中的软件设置一次临时运行时长。
 5. 后台服务会持续监控进程；锁定后，切换模式或永久削弱保护仍必须完成冷静期解除。
 
-如果直接运行 `artifacts\publish\app\BlockGame.App.exe`，程序在首次进入主界面前也会自动查找并安装 `BlockGameGuard` 服务；它会从同级的 `..\guard` 目录复制守护程序到 `C:\Program Files\BlockGame`，然后启动服务。若只复制了 App 文件而没有携带 guard 发布目录，自动安装会失败并给出提示。
+如果直接运行 `artifacts\publish\app\BlockGame.App.exe`，程序在首次进入主界面前也会自动查找并安装 `BlockGameGuard` 服务；它会从同级的 `..\guard` 目录复制守护程序到 `C:\Program Files\BlockGame`，然后启动服务。安装时还会注册以 `SYSTEM` 身份运行的独立计划任务：`BlockGameGuardWatchdog` 常驻并每 2 秒检查服务，`BlockGameGuardRecovery` 每分钟执行一次兜底恢复；即使管理程序和服务进程均已退出，被正常停止的守护服务也会快速重新启动。若只复制了 App 文件而没有携带 guard 发布目录，自动安装会失败并给出提示。
 
 ## 正常卸载
 
@@ -116,4 +116,4 @@ dotnet run --project .\tests\BlockGame.SelfTest\BlockGame.SelfTest.csproj
 
 ## 重要限制
 
-v0.1.3 使用高频进程监控，因此被拦截程序可能短暂出现；AppLocker / WDAC 的创建和签名策略将在后续版本加入。网站规则按域名生效，无法只屏蔽 URL 中的某个路径；企业域策略、VPN 或自带代理/解析器的软件可能优先使用自己的策略。拥有本机管理员权限的人仍可以进入安全模式、离线修改文件或重装系统。本项目不使用隐藏持久化、内核驱动或破坏系统的方式。
+v0.1.4 使用高频进程监控，因此被拦截程序可能短暂出现；AppLocker / WDAC 的创建和签名策略将在后续版本加入。网站规则按域名生效，无法只屏蔽 URL 中的某个路径；企业域策略、VPN 或自带代理/解析器的软件可能优先使用自己的策略。拥有本机管理员权限的人仍可以进入安全模式、离线修改文件或重装系统。本项目不使用隐藏持久化、内核驱动或破坏系统的方式。

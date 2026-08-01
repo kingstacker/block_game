@@ -1,10 +1,39 @@
 [CmdletBinding()]
 param(
     [string]$PublishRoot = '',
-    [string]$Version = '0.1.3'
+    [string]$Version = '0.1.4',
+
+    [string]$LogPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($LogPath)) {
+    $LogPath = Join-Path ${env:ProgramData} 'BlockGame-install.log'
+}
+
+Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+trap {
+    try {
+        $logDirectory = Split-Path -Parent $LogPath
+        if (-not [string]::IsNullOrWhiteSpace($logDirectory)) {
+            New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+        }
+
+        $details = @(
+            'BlockGame installation failed.'
+            "Message: $($_.Exception.Message)"
+            "Position: $($_.InvocationInfo.PositionMessage)"
+            "Script stack: $($_.ScriptStackTrace)"
+        ) -join [Environment]::NewLine
+        Set-Content -LiteralPath $LogPath -Value $details -Encoding Default
+    }
+    catch {
+        # Preserve the original installation failure even if logging fails.
+    }
+
+    exit 1
+}
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -43,6 +72,52 @@ function Assert-FilesMatch {
     $actualHash = (Get-FileHash -LiteralPath $Actual -Algorithm SHA256).Hash
     if (-not [string]::Equals($expectedHash, $actualHash, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Installed file verification failed: $Actual"
+    }
+}
+
+function Register-SystemScheduledTask {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TaskName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Executable,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ActionArguments
+    )
+
+    if ($TaskName.Contains('"') -or $Executable.Contains('"') -or $ActionArguments.Contains('"')) {
+        throw "Scheduled task arguments contain an unsupported quote: $TaskName"
+    }
+
+    # Windows PowerShell 5.1 does not reliably preserve the nested quotes in
+    # schtasks.exe /TR when arguments are passed with the call operator. Pass a
+    # single, explicitly escaped command line so Program Files remains one path.
+    $argumentLine = '/Create /TN "{0}" /TR "\"{1}\" {2}" /SC MINUTE /MO 1 /RU SYSTEM /RL HIGHEST /F' -f `
+        $TaskName, $Executable, $ActionArguments
+    $outputPath = Join-Path ${env:TEMP} ("BlockGame-schtasks-{0}.out" -f [Guid]::NewGuid().ToString('N'))
+    $errorPath = Join-Path ${env:TEMP} ("BlockGame-schtasks-{0}.err" -f [Guid]::NewGuid().ToString('N'))
+
+    try {
+        $process = Start-Process `
+            -FilePath $scheduledTaskTool `
+            -ArgumentList $argumentLine `
+            -Wait `
+            -PassThru `
+            -NoNewWindow `
+            -RedirectStandardOutput $outputPath `
+            -RedirectStandardError $errorPath
+        $output = @(
+            Get-Content -LiteralPath $outputPath -Raw -ErrorAction SilentlyContinue
+            Get-Content -LiteralPath $errorPath -Raw -ErrorAction SilentlyContinue
+        ) -join [Environment]::NewLine
+        if ($process.ExitCode -ne 0) {
+            throw "Failed to register scheduled task '$TaskName' (exit code $($process.ExitCode)): $($output.Trim())"
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $outputPath, $errorPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -94,6 +169,9 @@ $dataDir = Join-Path ${env:ProgramData} 'BlockGame'
 $uninstallScript = Join-Path $dataDir 'uninstall-installed.ps1'
 $maintenanceStopFile = Join-Path $dataDir 'maintenance-stop.request'
 $serviceName = 'BlockGameGuard'
+$serviceWatchdogTaskName = 'BlockGameGuardWatchdog'
+$serviceRecoveryTaskName = 'BlockGameGuardRecovery'
+$scheduledTaskTool = Join-Path $env:SystemRoot 'System32\schtasks.exe'
 
 # The WPF control panel loads BlockGame.Core.dll from the installation directory.
 # Stop it before copying so Windows cannot leave the new app beside an old loaded core assembly.
@@ -103,6 +181,25 @@ Get-Process -Name 'BlockGame.DropBridge' -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction Stop
 Get-Process -Name 'BlockGame.Uninstall' -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction Stop
+
+if (Test-Path -LiteralPath $scheduledTaskTool) {
+    foreach ($taskName in @($serviceWatchdogTaskName, $serviceRecoveryTaskName)) {
+        # Missing tasks are expected on a first install. Start-Process keeps
+        # schtasks stderr from becoming a terminating PowerShell error.
+        Start-Process `
+            -FilePath $scheduledTaskTool `
+            -ArgumentList @('/End', '/TN', $taskName) `
+            -WindowStyle Hidden `
+            -Wait `
+            -ErrorAction SilentlyContinue
+        Start-Process `
+            -FilePath $scheduledTaskTool `
+            -ArgumentList @('/Delete', '/TN', $taskName, '/F') `
+            -WindowStyle Hidden `
+            -Wait `
+            -ErrorAction SilentlyContinue
+    }
+}
 
 if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
@@ -152,6 +249,21 @@ $binaryPath = '"{0}" --service' -f $guardBinary
 New-Service -Name $serviceName -BinaryPathName $binaryPath -DisplayName 'BlockGame Guard Service' -Description 'BlockGame process guard' -StartupType Automatic | Out-Null
 & sc.exe failure $serviceName actions= restart/500/restart/1000/restart/3000 reset= 86400 | Out-Null
 & sc.exe failureflag $serviceName 1 | Out-Null
+
+Register-SystemScheduledTask `
+    -TaskName $serviceWatchdogTaskName `
+    -Executable $guardBinary `
+    -ActionArguments '--watch-service'
+
+Register-SystemScheduledTask `
+    -TaskName $serviceRecoveryTaskName `
+    -Executable $guardBinary `
+    -ActionArguments '--ensure-service-running'
+
+& $scheduledTaskTool /Run /TN $serviceWatchdogTaskName | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw 'Failed to start the continuous guard service watchdog task.'
+}
 
 $uninstallKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\BlockGame'
 New-Item -Path $uninstallKey -Force | Out-Null

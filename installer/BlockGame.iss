@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.3"
+  #define MyAppVersion "0.1.4"
 #endif
 
 #define MyAppName "BlockGame"
@@ -167,6 +167,8 @@ var
   PowerShellPath: String;
   InstallScriptPath: String;
   PublishRootPath: String;
+  InstallLogPath: String;
+  InstallError: AnsiString;
   Parameters: String;
 begin
   if CurStep <> ssPostInstall then
@@ -176,9 +178,12 @@ begin
   PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
   InstallScriptPath := ExpandConstant('{tmp}\BlockGameInstaller\install.ps1');
   PublishRootPath := ExpandConstant('{tmp}\BlockGamePayload');
+  InstallLogPath := ExpandConstant('{commonappdata}\BlockGame-install.log');
+  DeleteFile(InstallLogPath);
   Parameters :=
     '-NoProfile -ExecutionPolicy Bypass -File "' + InstallScriptPath +
-    '" -PublishRoot "' + PublishRootPath + '" -Version "{#MyAppVersion}"';
+    '" -PublishRoot "' + PublishRootPath + '" -Version "{#MyAppVersion}"' +
+    ' -LogPath "' + InstallLogPath + '"';
 
   if not Exec(
     PowerShellPath,
@@ -191,5 +196,10 @@ begin
     RaiseException('无法启动 BlockGame 安装脚本。');
 
   if ResultCode <> 0 then
-    RaiseException(Format('BlockGame 安装失败，错误代码：%d。', [ResultCode]));
+  begin
+    if LoadStringFromFile(InstallLogPath, InstallError) then
+      RaiseException(Format('BlockGame 安装失败，错误代码：%d。%n%n%s', [ResultCode, InstallError]))
+    else
+      RaiseException(Format('BlockGame 安装失败，错误代码：%d；未能读取安装日志：%s。', [ResultCode, InstallLogPath]));
+  end;
 end;
