@@ -53,7 +53,8 @@ $commonArguments = @(
     "-p:Version=$Version",
     "-p:AssemblyVersion=$binaryVersion",
     "-p:FileVersion=$binaryVersion",
-    "-p:InformationalVersion=$Version"
+    "-p:InformationalVersion=$Version",
+    '-p:IncludeSourceRevisionInInformationalVersion=false'
 )
 if ($SelfContained) {
     $commonArguments += @('-r', 'win-x64')
