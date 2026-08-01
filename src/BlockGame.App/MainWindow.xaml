@@ -139,7 +139,7 @@
                                     <TextBlock Text="规则名称"
                                                Margin="0,0,0,6"
                                                Foreground="{StaticResource MutedTextBrush}" />
-                                    <TextBox x:Name="RuleNameTextBox" Height="38" />
+                                    <TextBox x:Name="RuleNameTextBox" MinHeight="38" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Margin="0,0,12,0">
                                     <TextBlock Text="匹配方式"
